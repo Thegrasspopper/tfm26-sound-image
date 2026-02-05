@@ -1,0 +1,7 @@
+{
+  "name": "SonicPalette PRO",
+  "description": "Professional hybrid sampling and physical modeling audio engine that transforms visual DNA into high-fidelity organic soundscapes.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
