@@ -187,6 +187,47 @@ export class SynthEngine {
     return this.encodeSamplesToMp3();
   }
 
+  public async exportSequenceToMp3(
+    sequence: MusicalNote[],
+    instrument: InstrumentType,
+    bpm: number,
+    volume: number = 1
+  ): Promise<Blob> {
+    if (!this.midiSounds?.audioContext) {
+      throw new Error("MIDI engine not initialized.");
+    }
+    if (!Array.isArray(sequence) || sequence.length === 0) {
+      throw new Error("Sequence is empty.");
+    }
+
+    if (this.midiSounds.audioContext.state === "suspended") {
+      await this.midiSounds.audioContext.resume();
+    }
+    this.initRecordingBus();
+
+    this.startRecording();
+    await new Promise(resolve => setTimeout(resolve, 120));
+
+    const stepDuration = 60 / (Math.max(1, bpm) * 2);
+    sequence.forEach((note, index) => {
+      const whenMs = Math.floor(index * stepDuration * 1000);
+      setTimeout(() => {
+        if (note && note.intensity > 0.05) {
+          this.playMIDINote(note, instrument, volume);
+        }
+      }, whenMs);
+    });
+
+    const totalMs = Math.ceil(sequence.length * stepDuration * 1000) + 1200;
+    await new Promise(resolve => setTimeout(resolve, totalMs));
+
+    const blob = await this.stopRecording();
+    if (!blob || blob.size === 0) {
+      throw new Error("Failed to encode MP3.");
+    }
+    return blob;
+  }
+
   private async encodeSamplesToMp3(): Promise<Blob> {
     if (typeof lamejs === 'undefined') {
       throw new Error("LAME encoder not loaded.");
@@ -224,7 +265,7 @@ export class SynthEngine {
     const endBuf = mp3encoder.flush();
     if (endBuf.length > 0) mp3Data.push(new Uint8Array(endBuf));
 
-    return new Blob(mp3Data, { type: 'audio/mpeg' });
+    return new Blob(mp3Data as BlobPart[], { type: 'audio/mpeg' });
   }
 
   private playMIDINote(note: MusicalNote, instrument: InstrumentType, trackVolume: number) {

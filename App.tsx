@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Play, Pause, RefreshCw, Image as ImageIcon, Sparkles, AlertCircle, Music, Plus, Trash2, Volume2, VolumeX, Palette, Timer, Headphones, Square, Circle, Wand2, ChevronUp, Loader2 } from 'lucide-react';
+import { Play, Pause, RefreshCw, Image as ImageIcon, Sparkles, AlertCircle, Music, Plus, Trash2, Volume2, VolumeX, Palette, Timer, Headphones, Square, Circle, Wand2, ChevronUp, Loader2, Download } from 'lucide-react';
 // @ts-ignore
 import MIDISoundsModule, { MIDISounds } from './services/midisoundsreact';
 import { AppStatus, SonicTrack, InstrumentType, getInstrumentsForGenre, FilterState } from './types';
@@ -19,6 +19,10 @@ const App: React.FC = () => {
   const [globalError, setGlobalError] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [showSettings, setShowSettings] = useState<string | null>(null);
+  const [sunoLoading, setSunoLoading] = useState(false);
+  const [sunoError, setSunoError] = useState<string | null>(null);
+  const [sunoItems, setSunoItems] = useState<any[] | null>(null);
+  const [exportingTrackId, setExportingTrackId] = useState<string | null>(null);
   
   const [globalBpm, setGlobalBpm] = useState<number>(120);
   const [globalGenre, setGlobalGenre] = useState<string>("Modern Pop");
@@ -226,6 +230,61 @@ const App: React.FC = () => {
     }
   };
 
+  const exportTrackSequenceAsMp3 = async (track: SonicTrack) => {
+    if (!track.profile?.sequence?.length) return;
+
+    if (isPlaying) {
+      stopPlayback();
+    }
+
+    setExportingTrackId(track.id);
+    try {
+      const blob = await synth.exportSequenceToMp3(
+        track.profile.sequence,
+        track.selectedInstrument,
+        globalBpm,
+        track.volume ?? 1
+      );
+
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.style.display = 'none';
+      a.href = url;
+      a.download = `SonicPalette_Sequence_${track.id}_${new Date().toISOString().slice(0,19).replace(/:/g, '-')}.mp3`;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => {
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+      }, 100);
+    } catch (e: any) {
+      console.error("Sequence MP3 export failed", e);
+      setGlobalError(e?.message || "Failed to export sequence as MP3.");
+    } finally {
+      setExportingTrackId(null);
+    }
+  };
+
+  const fetchSunoResults = async () => {
+    const taskId = "2fac....";
+    try {
+      setSunoLoading(true);
+      setSunoError(null);
+      const restUrl = (window as any)?.WP_APP?.restUrl;
+      if (!restUrl) throw new Error('REST URL not configured (window.WP_APP.restUrl)');
+      const res = await fetch(`${restUrl}suno/v1/results?task_id=${encodeURIComponent(taskId)}`);
+      if (!res.ok) throw new Error(`Request failed: ${res.status}`);
+      const json = await res.json();
+      console.log(json.items);
+      setSunoItems(json.items || []);
+    } catch (err: any) {
+      console.error(err);
+      setSunoError(err?.message || 'Failed to fetch Suno results');
+    } finally {
+      setSunoLoading(false);
+    }
+  };
+
   const isAnySoloed = tracks.some(t => t.isSoloed);
 
   return (
@@ -375,6 +434,19 @@ const App: React.FC = () => {
                 Analyze Image
               </div>
             </label>
+
+            <button
+              onClick={fetchSunoResults}
+              disabled={sunoLoading}
+              className={`flex items-center gap-2 py-3 px-4 rounded-2xl font-bold border border-white/10 shadow-lg ${sunoLoading ? 'bg-slate-700 text-slate-300 cursor-wait' : 'bg-slate-800 text-white hover:bg-slate-700'}`}
+            >
+              {sunoLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+              <span className="hidden sm:inline">Fetch Suno</span>
+            </button>
+
+            {sunoError && (
+              <div className="text-xs text-red-400 ml-2">{sunoError}</div>
+            )}
           </div>
         </section>
 
@@ -439,6 +511,17 @@ const App: React.FC = () => {
                   <div className="absolute inset-0 bg-gradient-to-t from-slate-900/90 via-transparent to-transparent pointer-events-none" />
                   
                   <div className="absolute top-4 right-4 flex flex-col gap-2 z-10">
+                      <button
+                        onClick={() => exportTrackSequenceAsMp3(track)}
+                        disabled={exportingTrackId === track.id || track.status !== AppStatus.READY}
+                        className={`p-2 rounded-lg shadow-lg backdrop-blur-sm transition-all ${
+                          exportingTrackId === track.id
+                            ? 'bg-slate-700 text-slate-300 cursor-wait'
+                            : 'bg-emerald-600/90 hover:bg-emerald-500 text-white'
+                        }`}
+                      >
+                        {exportingTrackId === track.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                      </button>
                       <button 
                         onClick={() => regenerateTrack(track.id)}
                         className="p-2 bg-pink-600/90 hover:bg-pink-500 text-white rounded-lg shadow-lg backdrop-blur-sm transition-all"

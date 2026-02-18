@@ -12,7 +12,9 @@ export default defineConfig(({ mode }) => {
       plugins: [react()],
       define: {
         'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),
-        'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY)
+        'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
+        'process.env.SUNO_API_KEY': JSON.stringify(env.SUNO_API_KEY)
+
       },
       resolve: {
         alias: {
@@ -24,6 +26,11 @@ export default defineConfig(({ mode }) => {
       },
       ssr: {
         noExternal: ['midi-sounds-react']
-      }
+      }, 
+      base: "./", 
+      build: {
+        manifest: true,
+        outDir: "dist",
+      },
     };
 });
