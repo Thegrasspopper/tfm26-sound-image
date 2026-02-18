@@ -8,6 +8,7 @@ import { composeFromImage } from './services/geminiService';
 import { synth } from './services/synthEngine';
 import { getAllRequiredInstruments, getAllRequiredDrums } from './services/midiMapping';
 import { SonicProfile } from './types';
+import {generateCoverWithSuno,SunoRequest} from './services/sunoService';
 
 // Handle potential ESM wrapping of the CJS library
 const App: React.FC = () => {
@@ -114,18 +115,18 @@ const App: React.FC = () => {
       headers['X-WP-Nonce'] = wpApp.nonce;
     }
 
-    const res = await fetch(endpoint, {
+    const response = await fetch(endpoint, {
       method: 'POST',
       headers,
       body: formData,
     });
 
-    if (!res.ok) {
-      const errText = await res.text();
-      throw new Error(`WP upload failed (${res.status}): ${errText || 'Unknown error'}`);
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`WP upload failed (${response.status}): ${errText || 'Unknown error'}`);
     }
 
-    return res;
+    return response.json();
   };
 
   
@@ -153,6 +154,15 @@ const App: React.FC = () => {
         bpm: bpmToUse,
       });
       console.log(`Track ${trackId}: sequence MP3 exported and uploaded to WP. ${uploadResult.status} ${uploadResult.url}`);
+      const sunoRequest: SunoRequest = {
+        uploadUrl: uploadResult.url,
+        prompt: `Create a ${genre} track with the following profile: ${profile.textureDescription}`,
+        style: genre,
+        title: `SonicPalette_${genre}_${new Date().toISOString().slice(0,19).replace(/:/g, '-')}`,
+        callBackUrl: `${(window as any)?.WP_APP?.restUrl}suno/v1/callback`
+      };
+      const suno_result = await generateCoverWithSuno(sunoRequest) 
+      console.log("Suno result:", suno_result);
     } catch (err: any) {
       console.error(`Track ${trackId}: auto export/upload failed`, err);
       setGlobalError(err?.message || 'Failed to export and upload sequence MP3.');
