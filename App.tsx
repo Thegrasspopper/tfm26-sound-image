@@ -7,6 +7,7 @@ import { AppStatus, SonicTrack, InstrumentType, getInstrumentsForGenre, FilterSt
 import { composeFromImage } from './services/geminiService';
 import { synth } from './services/synthEngine';
 import { getAllRequiredInstruments, getAllRequiredDrums } from './services/midiMapping';
+import { SonicProfile } from './types';
 
 // Handle potential ESM wrapping of the CJS library
 const App: React.FC = () => {
@@ -71,6 +72,97 @@ const App: React.FC = () => {
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
+  const waitForMidiEngine = async (timeoutMs: number = 8000) => {
+    const startedAt = Date.now();
+    while (!midiSoundsRef.current) {
+      if (Date.now() - startedAt > timeoutMs) {
+        throw new Error('MIDI engine did not initialize in time.');
+      }
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    synth.setMidiSounds(midiSoundsRef.current);
+  };
+
+  const uploadSequenceBlobToWp = async (
+    blob: Blob,
+    payload: {
+      trackId: string;
+      profile: SonicProfile;
+      genre: string;
+      instrument: InstrumentType;
+      bpm: number;
+    }
+  ) => {
+    const wpApp = (window as any)?.WP_APP || {};
+    const restUrl = wpApp.restUrl;
+    const endpoint = wpApp.sequenceUploadEndpoint || (restUrl ? `${restUrl}suno/v1/upload-mp3?token=${encodeURIComponent(process.env.UPLOAD_TOKEN)}` : null);
+    if (!endpoint) {
+      throw new Error('WP upload endpoint not configured (window.WP_APP.sequenceUploadEndpoint or window.WP_APP.restUrl).');
+    }
+
+    const fileName = `sequence_${payload.trackId}_${new Date().toISOString().slice(0,19).replace(/:/g, '-')}.mp3`;
+    const formData = new FormData();
+    formData.append('file', blob, fileName);
+    formData.append('track_id', payload.trackId);
+    formData.append('genre', payload.genre);
+    formData.append('instrument', payload.instrument);
+    formData.append('bpm', String(payload.bpm));
+    formData.append('profile', JSON.stringify(payload.profile));
+
+    const headers: Record<string, string> = {};
+    if (wpApp.nonce) {
+      headers['X-WP-Nonce'] = wpApp.nonce;
+    }
+
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers,
+      body: formData,
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`WP upload failed (${res.status}): ${errText || 'Unknown error'}`);
+    }
+
+    return res;
+  };
+
+  
+  const autoExportAndUploadTrack = async (
+    trackId: string,
+    profile: SonicProfile,
+    genre: string,
+    volume: number
+  ) => {
+    setExportingTrackId(trackId);
+    try {
+      await waitForMidiEngine();
+      const bpmToUse = profile.bpm || globalBpm;
+      const blob = await synth.exportSequenceToMp3(
+        profile.sequence,
+        profile.suggestedInstrument,
+        bpmToUse,
+        volume
+      );
+      const uploadResult = await uploadSequenceBlobToWp(blob, {
+        trackId,
+        profile,
+        genre,
+        instrument: profile.suggestedInstrument,
+        bpm: bpmToUse,
+      });
+      console.log(`Track ${trackId}: sequence MP3 exported and uploaded to WP. ${uploadResult.status} ${uploadResult.url}`);
+    } catch (err: any) {
+      console.error(`Track ${trackId}: auto export/upload failed`, err);
+      setGlobalError(err?.message || 'Failed to export and upload sequence MP3.');
+    } finally {
+      setExportingTrackId(prev => (prev === trackId ? null : prev));
+    }
+  };
+
+
+
   // Add a new image.
   const addTrack = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -108,6 +200,7 @@ const App: React.FC = () => {
           selectedInstrument: result.suggestedInstrument
         } : t));
         setGlobalError(null);
+        void autoExportAndUploadTrack(id, result, globalGenre, 0.8);
       } catch (err: any) {
         setTracks(prev => prev.filter(t => t.id !== id));
         setGlobalError(err.message || "Failed to analyze image.");
@@ -134,6 +227,7 @@ const App: React.FC = () => {
         status: AppStatus.READY,
         selectedInstrument: result.suggestedInstrument
       } : t));
+      void autoExportAndUploadTrack(id, result, track.genre, track.volume ?? 0.8);
     } catch (err: any) {
       setTracks(prev => prev.map(t => t.id === id ? { ...t, status: AppStatus.READY } : t));
       setGlobalError("Style shift failed.");

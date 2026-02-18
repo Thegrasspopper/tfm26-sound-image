@@ -2,8 +2,6 @@
 import { MusicalNote, SonicTrack, InstrumentType } from "../types";
 import { MIDI_MAP } from "./midiMapping";
 
-declare const lamejs: any;
-
 /**
  * GLOBAL AUDIO INTERCEPTOR
  * This monkey-patches the Web Audio API to capture every node that tries to play sound.
@@ -45,9 +43,11 @@ export class SynthEngine {
   // Recording State
   private isRecordingInternal: boolean = false;
   private recordingBus: GainNode | null = null;
+  private recordingSourceNode: AudioNode | null = null;
   private processor: ScriptProcessorNode | null = null;
   private leftSamples: Float32Array[] = [];
   private rightSamples: Float32Array[] = [];
+  private lameLoaderPromise: Promise<any> | null = null;
 
   public setMidiSounds(instance: any) {
     this.midiSounds = instance;
@@ -133,16 +133,23 @@ export class SynthEngine {
     this.activeTracks = tracks; 
   }
 
-  public startRecording() {
-    if (!this.recordingBus || !this.midiSounds?.audioContext) {
-      console.error("Recording bus not ready.");
+  public startRecording(sourceNode?: AudioNode) {
+    if (!this.midiSounds?.audioContext) {
+      console.error("Audio context not ready.");
       return;
     }
     
     const ctx = this.midiSounds.audioContext;
+    const captureSource = sourceNode || this.recordingBus;
+    if (!captureSource) {
+      console.error("Recording source not ready.");
+      return;
+    }
+
     this.leftSamples = [];
     this.rightSamples = [];
     this.isRecordingInternal = true;
+    this.recordingSourceNode = captureSource;
 
     // ScriptProcessor is used here because it guarantees sample-accurate capture
     // of the mixed output, which MediaRecorder often fails at for Web Audio.
@@ -160,7 +167,7 @@ export class SynthEngine {
       for(let i=0; i<4096; i++) { outL[i] = 0; outR[i] = 0; }
     };
 
-    this.recordingBus.connect(this.processor);
+    captureSource.connect(this.processor);
     // Connect to destination to keep the processor alive/active
     this.processor.connect(ctx.destination);
     
@@ -172,12 +179,17 @@ export class SynthEngine {
 
     this.isRecordingInternal = false;
     const proc = this.processor;
-    const bus = this.recordingBus;
+    const source = this.recordingSourceNode;
 
     // Clean up nodes
     proc.disconnect();
-    if (bus) bus.disconnect(proc);
+    if (source) {
+      try {
+        source.disconnect(proc);
+      } catch (e) {}
+    }
     this.processor = null;
+    this.recordingSourceNode = null;
 
     if (this.leftSamples.length === 0) {
       console.warn("No samples captured.");
@@ -205,8 +217,15 @@ export class SynthEngine {
     }
     this.initRecordingBus();
 
-    this.startRecording();
-    await new Promise(resolve => setTimeout(resolve, 120));
+    const captureNode: AudioNode | null = this.midiSounds?.echo?.output || this.recordingBus;
+    if (!captureNode) {
+      throw new Error("Recording source unavailable.");
+    }
+
+    const previousVolume = this.masterVolume;
+    this.setMasterVolume(0);
+    this.startRecording(captureNode);
+    await new Promise(resolve => setTimeout(resolve, 150));
 
     const stepDuration = 60 / (Math.max(1, bpm) * 2);
     sequence.forEach((note, index) => {
@@ -221,20 +240,22 @@ export class SynthEngine {
     const totalMs = Math.ceil(sequence.length * stepDuration * 1000) + 1200;
     await new Promise(resolve => setTimeout(resolve, totalMs));
 
-    const blob = await this.stopRecording();
-    if (!blob || blob.size === 0) {
-      throw new Error("Failed to encode MP3.");
+    try {
+      const blob = await this.stopRecording();
+      if (!blob || blob.size === 0) {
+        throw new Error("Failed to encode MP3.");
+      }
+      return blob;
+    } finally {
+      this.setMasterVolume(previousVolume);
     }
-    return blob;
   }
 
   private async encodeSamplesToMp3(): Promise<Blob> {
-    if (typeof lamejs === 'undefined') {
-      throw new Error("LAME encoder not loaded.");
-    }
+    const lame = await this.getLameEncoder();
 
     const sampleRate = this.midiSounds.audioContext.sampleRate;
-    const mp3encoder = new lamejs.Mp3Encoder(2, sampleRate, 128);
+    const mp3encoder = new lame.Mp3Encoder(2, sampleRate, 128);
     const mp3Data: Uint8Array[] = [];
 
     // Combine chunks into full arrays
@@ -266,6 +287,48 @@ export class SynthEngine {
     if (endBuf.length > 0) mp3Data.push(new Uint8Array(endBuf));
 
     return new Blob(mp3Data as BlobPart[], { type: 'audio/mpeg' });
+  }
+
+  private async getLameEncoder(): Promise<any> {
+    const w = window as any;
+    if (w.lamejs?.Mp3Encoder) return w.lamejs;
+
+    if (!this.lameLoaderPromise) {
+      this.lameLoaderPromise = new Promise((resolve, reject) => {
+        const existing = document.querySelector('script[data-lamejs-loader="1"]') as HTMLScriptElement | null;
+
+        const done = () => {
+          if (w.lamejs?.Mp3Encoder) {
+            resolve(w.lamejs);
+          } else {
+            reject(new Error("LAME encoder not loaded."));
+          }
+        };
+
+        if (existing) {
+          if ((existing as any)._loaded) {
+            done();
+            return;
+          }
+          existing.addEventListener("load", done, { once: true });
+          existing.addEventListener("error", () => reject(new Error("Failed to load LAME encoder script.")), { once: true });
+          return;
+        }
+
+        const script = document.createElement("script");
+        script.src = "https://cdn.jsdelivr.net/npm/lamejs@1.2.1/lame.min.js";
+        script.async = true;
+        script.setAttribute("data-lamejs-loader", "1");
+        script.addEventListener("load", () => {
+          (script as any)._loaded = true;
+          done();
+        }, { once: true });
+        script.addEventListener("error", () => reject(new Error("Failed to load LAME encoder script.")), { once: true });
+        document.head.appendChild(script);
+      });
+    }
+
+    return this.lameLoaderPromise;
   }
 
   private playMIDINote(note: MusicalNote, instrument: InstrumentType, trackVolume: number) {

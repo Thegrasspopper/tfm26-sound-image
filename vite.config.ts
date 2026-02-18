@@ -13,7 +13,8 @@ export default defineConfig(({ mode }) => {
       define: {
         'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),
         'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
-        'process.env.SUNO_API_KEY': JSON.stringify(env.SUNO_API_KEY)
+        'process.env.SUNO_API_KEY': JSON.stringify(env.SUNO_API_KEY),
+        'process.env.UPLOAD_TOKEN': JSON.stringify(env.UPLOAD_TOKEN),
 
       },
       resolve: {
