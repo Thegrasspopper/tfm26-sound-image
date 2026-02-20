@@ -24,6 +24,8 @@ export interface SonicProfile {
   feelings: string[];
   rgb: { r: number; g: number; b: number };
   musicGenre: string;
+  musicStyle: string;
+  mood: string;
   bpm: number;
   waveform: WaveformType;
   sequence: MusicalNote[];

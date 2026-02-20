@@ -20,7 +20,6 @@ export const composeFromImage = async (base64Image: string, genre: string = "Mod
   3. Genre: Confirm the sub-style.
   4. Waveform: Suggested by textures (Pop: clean; Techno: noisy/saw; R&B: smooth sine; Reggae: warm triangle).
   5. Suggested Instrument: Choose from: 'kick', 'hat', 'snare', 'clap', 'flute', 'vox', 'pad', 'bell', 'rhodes', 'string', 'pluck', 'brass', 'acid', 'rim', 'drone', 'noise'.
-  6. Sequence: 21 notes. Tailor intervals to the genre (e.g., Reggae skanks, Techno driving rhythms).
   7. Texture: 1-sentence description of the visual-audio link.
   
   Provide strictly valid JSON.`;
@@ -38,7 +37,13 @@ export const composeFromImage = async (base64Image: string, genre: string = "Mod
       responseSchema: {
         type: Type.OBJECT,
         properties: {
+          musicGenre: { type: Type.STRING },
+          musicStyle: { type: Type.STRING },
           feelings: { type: Type.ARRAY, items: { type: Type.STRING } },
+          mood: { type: Type.STRING },
+          bpm: { type: Type.INTEGER },
+          suggestedInstrument: { type: Type.STRING },
+          textureDescription: { type: Type.STRING },
           rgb: {
             type: Type.OBJECT,
             properties: {
@@ -48,25 +53,9 @@ export const composeFromImage = async (base64Image: string, genre: string = "Mod
             },
             required: ["r", "g", "b"]
           },
-          musicGenre: { type: Type.STRING },
-          bpm: { type: Type.INTEGER },
-          waveform: { type: Type.STRING },
-          suggestedInstrument: { type: Type.STRING },
-          sequence: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                frequency: { type: Type.NUMBER },
-                duration: { type: Type.NUMBER },
-                intensity: { type: Type.NUMBER }
-              },
-              required: ["frequency", "duration", "intensity"]
-            }
-          },
-          textureDescription: { type: Type.STRING }
+  
         },
-        required: ["feelings", "rgb", "musicGenre", "bpm", "waveform", "suggestedInstrument", "sequence", "textureDescription"]
+        required: ["feelings", "rgb", "mood","musicGenre", "bpm", "musicStyle", "suggestedInstrument",  "textureDescription"]
       }
     }
   });

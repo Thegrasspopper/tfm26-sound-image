@@ -8,7 +8,7 @@ import { composeFromImage } from './services/geminiService';
 import { synth } from './services/synthEngine';
 import { getAllRequiredInstruments, getAllRequiredDrums } from './services/midiMapping';
 import { SonicProfile } from './types';
-import {generateCoverWithSuno,SunoRequest} from './services/sunoService';
+import { runFalAudioToAudio, runTextToAudioWithFal, FalAudioToAudioInput,FalTextToAudioInput } from './services/falService';
 
 // Handle potential ESM wrapping of the CJS library
 const App: React.FC = () => {
@@ -73,6 +73,19 @@ const App: React.FC = () => {
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
+  const getWpAppConfig = () => {
+    const windowWpApp = (window as any)?.WP_APP || {};
+    const envWpApp = {
+      restUrl: process.env.WP_APP_REST_URL,
+      sequenceUploadEndpoint: process.env.WP_APP_SEQUENCE_UPLOAD_ENDPOINT,
+      nonce: process.env.WP_APP_NONCE,
+      falAudioToAudioEndpoint: process.env.WP_APP_FAL_AUDIO_TO_AUDIO_ENDPOINT,
+    };
+
+    // Local .env.local values provide defaults; runtime window.WP_APP can override them.
+    return { ...envWpApp, ...windowWpApp };
+  };
+
   const waitForMidiEngine = async (timeoutMs: number = 8000) => {
     const startedAt = Date.now();
     while (!midiSoundsRef.current) {
@@ -94,7 +107,7 @@ const App: React.FC = () => {
       bpm: number;
     }
   ) => {
-    const wpApp = (window as any)?.WP_APP || {};
+    const wpApp = getWpAppConfig();
     const restUrl = wpApp.restUrl;
     const endpoint = wpApp.sequenceUploadEndpoint || (restUrl ? `${restUrl}suno/v1/upload-mp3?token=${encodeURIComponent(process.env.UPLOAD_TOKEN)}` : null);
     if (!endpoint) {
@@ -154,15 +167,21 @@ const App: React.FC = () => {
         bpm: bpmToUse,
       });
       console.log(`Track ${trackId}: sequence MP3 exported and uploaded to WP. ${uploadResult.status} ${uploadResult.url}`);
-      const sunoRequest: SunoRequest = {
-        uploadUrl: uploadResult.url,
-        prompt: `Create a ${genre} track with the following profile: ${profile.textureDescription}`,
-        style: genre,
-        title: `SonicPalette_${genre}_${new Date().toISOString().slice(0,19).replace(/:/g, '-')}`,
-        callBackUrl: `${(window as any)?.WP_APP?.restUrl}suno/v1/callback`
+      if (!uploadResult?.url) {
+        throw new Error("Upload response missing public audio URL required by Fal (uploadResult.url).");
+      }
+
+      const falInput: FalAudioToAudioInput = {
+        prompt: `Create a ${genre} track with this texture: ${profile.textureDescription}`,
+        audio_url: uploadResult.url,
+        strength: 0.65,
+        total_seconds: 5,
+        guidance_scale: 15,
       };
-      const suno_result = await generateCoverWithSuno(sunoRequest) 
-      console.log("Suno result:", suno_result);
+
+      const falResult = await runFalAudioToAudio(falInput);
+
+      console.log("Fal audio-to-audio result:", falResult);
     } catch (err: any) {
       console.error(`Track ${trackId}: auto export/upload failed`, err);
       setGlobalError(err?.message || 'Failed to export and upload sequence MP3.');
@@ -210,7 +229,15 @@ const App: React.FC = () => {
           selectedInstrument: result.suggestedInstrument
         } : t));
         setGlobalError(null);
-        void autoExportAndUploadTrack(id, result, globalGenre, 0.8);
+
+      const falInput: FalTextToAudioInput = {
+        prompt: `Create an ${result.feelings[0]} ${result.musicGenre} instrumental perfect for a ${result.mood} mood, featuring ${result.suggestedInstrument} with a BPM of ${result.bpm}`,
+        strength: 0.65,
+        seconds_total: 5,
+        guidance_scale: 15,
+      };
+
+      const falResult = await runTextToAudioWithFal(falInput);
       } catch (err: any) {
         setTracks(prev => prev.filter(t => t.id !== id));
         setGlobalError(err.message || "Failed to analyze image.");
@@ -374,7 +401,7 @@ const App: React.FC = () => {
     try {
       setSunoLoading(true);
       setSunoError(null);
-      const restUrl = (window as any)?.WP_APP?.restUrl;
+      const restUrl = getWpAppConfig().restUrl;
       if (!restUrl) throw new Error('REST URL not configured (window.WP_APP.restUrl)');
       const res = await fetch(`${restUrl}suno/v1/results?task_id=${encodeURIComponent(taskId)}`);
       if (!res.ok) throw new Error(`Request failed: ${res.status}`);

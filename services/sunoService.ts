@@ -31,14 +31,14 @@ export const generateCoverWithSuno = async (sunoRequest: SunoRequest) => {
                 uploadUrl: sunoRequest.uploadUrl,
                 customMode: false,
                 instrumental: true,
-                model: sunoRequest.model || 'V5',
+                model: sunoRequest.model || 'V2',
                 callBackUrl: sunoRequest.callBackUrl,
-                prompt: sunoRequest.prompt,
+                prompt: "A short 5 seconds long audio track with "+sunoRequest.prompt,
                 style: sunoRequest.style,
                 title: sunoRequest.title,
                 styleWeight: sunoRequest.styleWeight || 0.65,
                 weirdnessConstraint: sunoRequest.weirdnessConstraint || 0.9,
-                audioWeight: sunoRequest.audioWeight || 1,
+                audioWeight: sunoRequest.audioWeight || 0.9,
             }),
         });
 
