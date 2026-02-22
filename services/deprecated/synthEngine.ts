@@ -1,5 +1,5 @@
 
-import { MusicalNote, SonicTrack, InstrumentType } from "../types";
+import { MusicalNote, SonicTrack, InstrumentType } from "../../types";
 import { MIDI_MAP } from "./midiMapping";
 
 /**

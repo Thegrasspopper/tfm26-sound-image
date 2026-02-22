@@ -2,13 +2,14 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Play, Pause, RefreshCw, Image as ImageIcon, Sparkles, AlertCircle, Music, Plus, Trash2, Volume2, VolumeX, Palette, Timer, Headphones, Square, Circle, Wand2, ChevronUp, Loader2, Download } from 'lucide-react';
 // @ts-ignore
-import MIDISoundsModule, { MIDISounds } from './services/midisoundsreact';
+import MIDISoundsModule, { MIDISounds } from './services/deprecated/midisoundsreact';
 import { AppStatus, SonicTrack, InstrumentType, getInstrumentsForGenre, FilterState } from './types';
 import { composeFromImage } from './services/geminiService';
-import { synth } from './services/synthEngine';
-import { getAllRequiredInstruments, getAllRequiredDrums } from './services/midiMapping';
+import { synth } from './services/deprecated/synthEngine';
+import { getAllRequiredInstruments, getAllRequiredDrums } from './services/deprecated/midiMapping';
 import { SonicProfile } from './types';
-import { runFalAudioToAudio, runTextToAudioWithFal, FalAudioToAudioInput,FalTextToAudioInput } from './services/falService';
+import { runFalAudioToAudio, runTextoToAuidoWithFalAce, FalAudioToAudioInput,FalTextToAudioAceResult } from './services/falService';
+import { wavAudioEngine } from "./services/wavAudioEngine";
 
 // Handle potential ESM wrapping of the CJS library
 const App: React.FC = () => {
@@ -77,9 +78,6 @@ const App: React.FC = () => {
     const windowWpApp = (window as any)?.WP_APP || {};
     const envWpApp = {
       restUrl: process.env.WP_APP_REST_URL,
-      sequenceUploadEndpoint: process.env.WP_APP_SEQUENCE_UPLOAD_ENDPOINT,
-      nonce: process.env.WP_APP_NONCE,
-      falAudioToAudioEndpoint: process.env.WP_APP_FAL_AUDIO_TO_AUDIO_ENDPOINT,
     };
 
     // Local .env.local values provide defaults; runtime window.WP_APP can override them.
@@ -124,9 +122,6 @@ const App: React.FC = () => {
     formData.append('profile', JSON.stringify(payload.profile));
 
     const headers: Record<string, string> = {};
-    if (wpApp.nonce) {
-      headers['X-WP-Nonce'] = wpApp.nonce;
-    }
 
     const response = await fetch(endpoint, {
       method: 'POST',
@@ -230,14 +225,18 @@ const App: React.FC = () => {
         } : t));
         setGlobalError(null);
 
-      const falInput: FalTextToAudioInput = {
+      const falInput: FalTextToAudioAceResult = {
         prompt: `Create an ${result.feelings[0]} ${result.musicGenre} instrumental perfect for a ${result.mood} mood, featuring ${result.suggestedInstrument} with a BPM of ${result.bpm}`,
-        strength: 0.65,
-        seconds_total: 5,
         guidance_scale: 15,
+        instrumental: true,
+        duration: 5,
       };
 
-      const falResult = await runTextToAudioWithFal(falInput);
+      const falResult = await runTextoToAuidoWithFalAce(falInput);
+      await wavAudioEngine.loadFromUrl(falResult.audio.url);
+      await wavAudioEngine.play();
+
+      console.log("Result: ", falResult);
       } catch (err: any) {
         setTracks(prev => prev.filter(t => t.id !== id));
         setGlobalError(err.message || "Failed to analyze image.");
@@ -313,17 +312,19 @@ const App: React.FC = () => {
   };
 
   const startPlayback = () => {
-    const readyTracks = tracks.filter(t => t.status === AppStatus.READY);
-    if (readyTracks.length === 0) return;
+    if (!wavAudioEngine.hasAnyLoadedBuffer()) return;
+    setActiveStep(-1);
     setIsPlaying(true);
-    synth.start(readyTracks, globalBpm, (step) => {
-      setActiveStep(step);
+    wavAudioEngine.playAll().catch((err) => {
+      console.error("WAV playback failed", err);
+      setIsPlaying(false);
+      setGlobalError(err?.message || "Failed to play WAV audio.");
     });
   };
 
   const stopPlayback = () => {
     if (isRecording) handleToggleRecording();
-    synth.stop();
+    wavAudioEngine.stopAll();
     setIsPlaying(false);
     setActiveStep(-1);
   };
@@ -467,7 +468,7 @@ const App: React.FC = () => {
             <div className="flex items-center gap-4">
               <button
                 onClick={isPlaying ? stopPlayback : startPlayback}
-                disabled={tracks.filter(t => t.status === AppStatus.READY).length === 0 || isEncoding}
+                disabled={!wavAudioEngine.hasAnyLoadedBuffer() || isEncoding}
                 className={`w-16 h-16 rounded-full flex items-center justify-center transition-all transform active:scale-90 shadow-xl z-10 ${
                   isPlaying 
                     ? 'bg-red-500 text-white shadow-red-500/20' 

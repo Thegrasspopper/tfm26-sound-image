@@ -2,6 +2,7 @@ import { fal } from "@fal-ai/client";
 
 const FAL_MODEL_PATH = "fal-ai/stable-audio-25/audio-to-audio";
 const FAL_TEXT_TO_AUDIO_MODEL_PATH = "fal-ai/stable-audio-25/text-to-audio";
+const FAL_TEXT_TO_AUIDO_ACE_MODEL_PATH = "fal-ai/ace-step/prompt-to-audio";
 
 
 export interface FalTextToAudioInput {
@@ -10,6 +11,23 @@ export interface FalTextToAudioInput {
   num_inference_steps?: number;
   guidance_scale?: number;
   seconds_total?: number;
+}
+
+
+export interface FalTextToAudioAceResult {
+  prompt: string;
+  instrumental?: boolean;
+  duration?: number;
+  number_of_steps?: number;
+  scheduler?: string;
+  guidance_type?: string;
+  granularity_scale?: number;
+  guidance_interval?: number;
+  guidance_interval_decay?: number;
+  guidance_scale?: number;
+  minimum_guidance_scale?: number;
+  tag_guidance_scale?: number;
+  lyric_guidance_scale?: number;
 }
 
 export interface FalAudioToAudioInput {
@@ -33,6 +51,41 @@ export interface FalAudioToAudioResult {
 }
 
 const getFalApiKey = () => process.env.FAL_KEY;
+
+export const runTextoToAuidoWithFalAce = async (
+  input: FalTextToAudioAceResult,
+  options?: {
+    apiKey?: string;
+  }
+): Promise<FalAudioToAudioResult> => {
+  const apiKey = options?.apiKey || getFalApiKey(); 
+  if (!apiKey) {
+    throw new Error("FAL API key missing. Set process.env.FAL_KEY or use a WP proxy endpoint.");
+  }
+
+  fal.config({
+    credentials: apiKey,
+  });
+
+  const result = await fal.subscribe(FAL_TEXT_TO_AUIDO_ACE_MODEL_PATH, {
+    input,
+    logs: true,
+    onQueueUpdate: (update: any) => {
+      if (update.status === "IN_PROGRESS") { 
+        (update.logs || [])          .map((log: any) => log?.message)
+          .filter(Boolean)
+          .forEach((message: string) => console.log(message));
+      }
+    },
+  });
+
+  return {
+    ...(result.data || {}),
+    request_id: result.requestId,
+  } as FalAudioToAudioResult;
+}
+
+
 
 export const runTextToAudioWithFal = async (
   input: FalTextToAudioInput,

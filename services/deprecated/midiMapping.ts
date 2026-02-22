@@ -1,5 +1,5 @@
 
-import { InstrumentType } from "../types";
+import { InstrumentType } from "../../types";
 
 /**
  * Mapping TrapPalette instruments to General MIDI Program numbers 

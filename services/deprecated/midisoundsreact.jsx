@@ -1,6 +1,6 @@
 import React from 'react';
 import ReactModal from 'react-modal';
-import WebAudioFontPlayer from './webaudiofont';
+import WebAudioFontPlayer from '../deprecated/webaudiofont';
 
 const STYLE = {
   MIDISoundsInfo: {
