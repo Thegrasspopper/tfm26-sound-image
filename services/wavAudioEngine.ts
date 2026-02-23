@@ -164,6 +164,10 @@ export class WavAudioPlayer {
     return !!this.audioBuffer;
   }
 
+  public getAudioBuffer(): AudioBuffer | null {
+    return this.audioBuffer;
+  }
+
   public unload(): void {
     this.stop();
     this.audioBuffer = null;
@@ -355,6 +359,32 @@ export class WavAudioEngine {
     this.defaultPlayer.unload();
   }
 
+  public getVisualizerAudioBuffer(): AudioBuffer | null {
+    const player = this.getPrimaryVisualizerPlayer();
+    return player?.getAudioBuffer() ?? null;
+  }
+
+  public getVisualizerCurrentTime(): number {
+    const player = this.getPrimaryVisualizerPlayer();
+    return player?.getCurrentTime() ?? 0;
+  }
+
+  public getTrackAudioBuffer(trackId: string): AudioBuffer | null {
+    return this.trackPlayers.get(trackId)?.getAudioBuffer() ?? null;
+  }
+
+  public getTrackCurrentTime(trackId: string): number {
+    return this.trackPlayers.get(trackId)?.getCurrentTime() ?? 0;
+  }
+
+  public isTrackPlaying(trackId: string): boolean {
+    return this.trackPlayers.get(trackId)?.isPlaying() ?? false;
+  }
+
+  public getAudioContextIfAvailable(): AudioContext | null {
+    return this.audioContext;
+  }
+
   private getOrCreateTrackPlayer(trackId: string): WavAudioPlayer {
     const existing = this.trackPlayers.get(trackId);
     if (existing) return existing;
@@ -389,6 +419,14 @@ export class WavAudioEngine {
       player.setPlaybackRate(playbackRate);
       player.setVolume(canPlay ? (track.volume ?? 1) : 0);
     });
+  }
+
+  private getPrimaryVisualizerPlayer(): WavAudioPlayer | null {
+    for (const track of this.activeTracks) {
+      const player = this.trackPlayers.get(track.id);
+      if (player?.hasLoadedBuffer()) return player;
+    }
+    return this.defaultPlayer.hasLoadedBuffer() ? this.defaultPlayer : null;
   }
 
   private getContext(): AudioContext {

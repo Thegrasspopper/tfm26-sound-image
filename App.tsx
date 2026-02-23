@@ -8,6 +8,7 @@ import { composeFromImage } from './services/geminiService';
 import { SonicProfile } from './types';
 import { runTextoToAuidoWithFalAce, FalTextToAudioAceResult } from './services/falService';
 import { wavAudioEngine } from "./services/wavAudioEngine";
+import AudioVisualizer from './components/AudioVisualizer';
 
 // Handle potential ESM wrapping of the CJS library
 const App: React.FC = () => {
@@ -26,6 +27,19 @@ const App: React.FC = () => {
   const [exportingTrackId, setExportingTrackId] = useState<string | null>(null);
   
   const [globalBpm, setGlobalBpm] = useState<number>(120);
+  const [audioDurationSec, setAudioDurationSec] = useState<number>(5);
+  const [showAdvancedAudio, setShowAdvancedAudio] = useState(false);
+  const [audioGenInstrumental, setAudioGenInstrumental] = useState(true);
+  const [audioGenGuidanceScale, setAudioGenGuidanceScale] = useState<number>(15);
+  const [audioGenNumberOfSteps, setAudioGenNumberOfSteps] = useState<string>('');
+  const [audioGenScheduler, setAudioGenScheduler] = useState<"euler" | "heun">("euler");
+  const [audioGenGuidanceType, setAudioGenGuidanceType] = useState<"cfg" | "apg" | "cfg_star">("cfg");
+  const [audioGenGranularityScale, setAudioGenGranularityScale] = useState<string>('');
+  const [audioGenGuidanceInterval, setAudioGenGuidanceInterval] = useState<string>('');
+  const [audioGenGuidanceIntervalDecay, setAudioGenGuidanceIntervalDecay] = useState<string>('');
+  const [audioGenMinimumGuidanceScale, setAudioGenMinimumGuidanceScale] = useState<string>('');
+  const [audioGenTagGuidanceScale, setAudioGenTagGuidanceScale] = useState<string>('');
+  const [audioGenLyricGuidanceScale, setAudioGenLyricGuidanceScale] = useState<string>('');
   const [globalGenre, setGlobalGenre] = useState<string>("Modern Pop");
   const [masterVolume, setMasterVolume] = useState<number>(0.8);
 
@@ -71,6 +85,12 @@ const App: React.FC = () => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const parseOptionalAudioParam = (value: string) => {
+    if (value.trim() === '') return undefined;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
   };
 
   const exportProject = () => {
@@ -248,11 +268,29 @@ const App: React.FC = () => {
        
 
       const audioPrompt = `Create an ${result.feelings[0]} ${result.musicGenre} instrumental perfect for a ${result.mood} mood, featuring ${result.suggestedInstrument} with a BPM of ${result.bpm}`;
+      const optionalAceParams = {
+        number_of_steps: parseOptionalAudioParam(audioGenNumberOfSteps),
+        granularity_scale: parseOptionalAudioParam(audioGenGranularityScale),
+        guidance_interval: parseOptionalAudioParam(audioGenGuidanceInterval),
+        guidance_interval_decay: parseOptionalAudioParam(audioGenGuidanceIntervalDecay),
+        minimum_guidance_scale: parseOptionalAudioParam(audioGenMinimumGuidanceScale),
+        tag_guidance_scale: parseOptionalAudioParam(audioGenTagGuidanceScale),
+        lyric_guidance_scale: parseOptionalAudioParam(audioGenLyricGuidanceScale),
+      };
       const falInput: FalTextToAudioAceResult = {
         prompt: audioPrompt,
-        guidance_scale: 15,
-        instrumental: true,
-        duration: 5,
+        guidance_scale: Math.max(0, audioGenGuidanceScale),
+        instrumental: audioGenInstrumental,
+        duration: Math.max(1, Math.min(30, Math.round(audioDurationSec))),
+        scheduler: audioGenScheduler,
+        guidance_type: audioGenGuidanceType,
+        ...(optionalAceParams.number_of_steps !== undefined ? { number_of_steps: Math.round(optionalAceParams.number_of_steps) } : {}),
+        ...(optionalAceParams.granularity_scale !== undefined ? { granularity_scale: optionalAceParams.granularity_scale } : {}),
+        ...(optionalAceParams.guidance_interval !== undefined ? { guidance_interval: optionalAceParams.guidance_interval } : {}),
+        ...(optionalAceParams.guidance_interval_decay !== undefined ? { guidance_interval_decay: optionalAceParams.guidance_interval_decay } : {}),
+        ...(optionalAceParams.minimum_guidance_scale !== undefined ? { minimum_guidance_scale: optionalAceParams.minimum_guidance_scale } : {}),
+        ...(optionalAceParams.tag_guidance_scale !== undefined ? { tag_guidance_scale: optionalAceParams.tag_guidance_scale } : {}),
+        ...(optionalAceParams.lyric_guidance_scale !== undefined ? { lyric_guidance_scale: optionalAceParams.lyric_guidance_scale } : {}),
       };
 
       const falResult = await runTextoToAuidoWithFalAce(falInput);
@@ -478,6 +516,30 @@ const App: React.FC = () => {
 
             <div className="space-y-2">
               <div className="flex items-center gap-2 text-[10px] font-black text-slate-500 uppercase tracking-widest">
+                <Timer className="w-3 h-3 text-emerald-400" /> Audio Duration
+              </div>
+              <div className="flex items-center gap-3">
+                <input
+                  type="range"
+                  min="1"
+                  max="30"
+                  step="1"
+                  value={audioDurationSec}
+                  onChange={(e) => {
+                    const next = parseInt(e.target.value || '1', 10);
+                    setAudioDurationSec(Math.max(1, Math.min(30, Number.isFinite(next) ? next : 5)));
+                  }}
+                  className="w-16 bg-slate-800/50 text-white text-[12px] font-bold p-2 rounded-lg outline-none border border-white/10"
+                />
+                <span className="text-sm font-black text-white w-8 text-center tabular-nums">{audioDurationSec}</span>
+                <span className="text-xs font-black tracking-widest uppercase text-slate-400">sec</span>
+              </div>
+            </div>
+
+            <div className="h-10 w-px bg-slate-800 hidden lg:block" />
+
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 text-[10px] font-black text-slate-500 uppercase tracking-widest">
                 <Palette className="w-3 h-3 text-green-400" /> Default Genre
               </div>
               <select 
@@ -490,6 +552,115 @@ const App: React.FC = () => {
                 <option value="R&B">R&B</option>
                 <option value="Reggae">Reggae</option>
               </select>
+            </div>
+
+            <div className="h-10 w-px bg-slate-800 hidden lg:block" />
+
+            <div className="space-y-2 min-w-[280px]">
+              <button
+                type="button"
+                onClick={() => setShowAdvancedAudio(prev => !prev)}
+                className="w-full flex items-center justify-between gap-2 text-[10px] font-black uppercase tracking-widest text-slate-300 bg-slate-800/50 border border-white/10 rounded-lg px-3 py-2 hover:bg-slate-700/60"
+              >
+                <span className="flex items-center gap-2">
+                  <Wand2 className="w-3 h-3 text-pink-400" />
+                  Advanced Audio
+                </span>
+                <ChevronUp className={`w-4 h-4 transition-transform ${showAdvancedAudio ? 'rotate-180' : ''}`} />
+              </button>
+
+              {showAdvancedAudio && (
+                <div className="rounded-xl border border-white/10 bg-slate-900/50 p-3 grid grid-cols-2 gap-3">
+                  <label className="col-span-2 flex items-center justify-between text-xs text-slate-200">
+                    <span>Instrumental</span>
+                    <input
+                      type="checkbox"
+                      checked={audioGenInstrumental}
+                      onChange={(e) => setAudioGenInstrumental(e.target.checked)}
+                      className="h-4 w-4 accent-pink-500"
+                    />
+                  </label>
+
+                  <label className="text-[10px] text-slate-300 space-y-1">
+                    <span className="uppercase tracking-widest">Guidance</span>
+                    <input
+                      type="number"
+                      step="0.1"
+                      min="0"
+                      value={audioGenGuidanceScale}
+                      onChange={(e) => setAudioGenGuidanceScale(Math.max(0, parseFloat(e.target.value || '0')))}
+                      className="w-full bg-slate-800 text-white rounded px-2 py-1.5 text-xs border border-white/10 outline-none"
+                    />
+                  </label>
+
+                  <label className="text-[10px] text-slate-300 space-y-1">
+                    <span className="uppercase tracking-widest">Steps</span>
+                    <input
+                      type="number"
+                      min="1"
+                      value={audioGenNumberOfSteps}
+                      onChange={(e) => setAudioGenNumberOfSteps(e.target.value)}
+                      placeholder="default"
+                      className="w-full bg-slate-800 text-white rounded px-2 py-1.5 text-xs border border-white/10 outline-none"
+                    />
+                  </label>
+
+                  <label className="text-[10px] text-slate-300 space-y-1">
+                    <span className="uppercase tracking-widest">Scheduler</span>
+                    <select
+                      value={audioGenScheduler}
+                      onChange={(e) => setAudioGenScheduler(e.target.value as "euler" | "heun")}
+                      className="w-full bg-slate-800 text-white rounded px-2 py-1.5 text-xs border border-white/10 outline-none"
+                    >
+                      <option value="euler">euler</option>
+                      <option value="heun">heun</option>
+                    </select>
+                  </label>
+
+                  <label className="text-[10px] text-slate-300 space-y-1">
+                    <span className="uppercase tracking-widest">Guidance Type</span>
+                    <select
+                      value={audioGenGuidanceType}
+                      onChange={(e) => setAudioGenGuidanceType(e.target.value as "cfg" | "apg" | "cfg_star")}
+                      className="w-full bg-slate-800 text-white rounded px-2 py-1.5 text-xs border border-white/10 outline-none"
+                    >
+                      <option value="cfg">cfg</option>
+                      <option value="apg">apg</option>
+                      <option value="cfg_star">cfg_star</option>
+                    </select>
+                  </label>
+
+                  <label className="text-[10px] text-slate-300 space-y-1">
+                    <span className="uppercase tracking-widest">Granularity</span>
+                    <input type="number" step="0.1" value={audioGenGranularityScale} onChange={(e) => setAudioGenGranularityScale(e.target.value)} placeholder="default" className="w-full bg-slate-800 text-white rounded px-2 py-1.5 text-xs border border-white/10 outline-none" />
+                  </label>
+
+                  <label className="text-[10px] text-slate-300 space-y-1">
+                    <span className="uppercase tracking-widest">Guidance Interval</span>
+                    <input type="number" step="0.01" value={audioGenGuidanceInterval} onChange={(e) => setAudioGenGuidanceInterval(e.target.value)} placeholder="default" className="w-full bg-slate-800 text-white rounded px-2 py-1.5 text-xs border border-white/10 outline-none" />
+                  </label>
+
+                  <label className="text-[10px] text-slate-300 space-y-1">
+                    <span className="uppercase tracking-widest">Interval Decay</span>
+                    <input type="number" step="0.01" value={audioGenGuidanceIntervalDecay} onChange={(e) => setAudioGenGuidanceIntervalDecay(e.target.value)} placeholder="default" className="w-full bg-slate-800 text-white rounded px-2 py-1.5 text-xs border border-white/10 outline-none" />
+                  </label>
+
+                  <label className="text-[10px] text-slate-300 space-y-1">
+                    <span className="uppercase tracking-widest">Min Guidance</span>
+                    <input type="number" step="0.1" value={audioGenMinimumGuidanceScale} onChange={(e) => setAudioGenMinimumGuidanceScale(e.target.value)} placeholder="default" className="w-full bg-slate-800 text-white rounded px-2 py-1.5 text-xs border border-white/10 outline-none" />
+                  </label>
+
+                  <label className="text-[10px] text-slate-300 space-y-1">
+                    <span className="uppercase tracking-widest">Tag Guidance</span>
+                    <input type="number" step="0.1" value={audioGenTagGuidanceScale} onChange={(e) => setAudioGenTagGuidanceScale(e.target.value)} placeholder="default" className="w-full bg-slate-800 text-white rounded px-2 py-1.5 text-xs border border-white/10 outline-none" />
+                  </label>
+
+                  <label className="text-[10px] text-slate-300 space-y-1">
+                    <span className="uppercase tracking-widest">Lyric Guidance</span>
+                    <input type="number" step="0.1" value={audioGenLyricGuidanceScale} onChange={(e) => setAudioGenLyricGuidanceScale(e.target.value)} placeholder="default" className="w-full bg-slate-800 text-white rounded px-2 py-1.5 text-xs border border-white/10 outline-none" />
+                  </label>
+                </div>
+              )}
             </div>
           </div>
 
@@ -604,21 +775,6 @@ const App: React.FC = () => {
                 </div>
 
                 <div className="p-5 bg-slate-900/40 flex flex-col gap-4">
-                  <div className="flex justify-between items-center text-[10px] font-black text-slate-500 uppercase tracking-widest">
-                    <label className="flex items-center gap-2 text-[10px] normal-case tracking-normal">
-                      <Timer className="w-3 h-3 text-slate-400" />
-                      <input
-                        type="range"
-                        min="40"
-                        max="240"
-                        step="1"
-                        value={track.targetBpm ?? track.profile?.bpm ?? globalBpm}
-                        onChange={(e) => changeTrackBpm(track.id, parseInt(e.target.value || '0', 10))}
-                        className="w-40 bg-slate-800 text-white rounded px-2 py-1 text-[15px] font-bold outline-none"
-                      />
-                      <span className="text-slate-400">BPM</span>
-                    </label>
-                  </div>
                   
                   <div className="flex items-center gap-4">
                     <div className="flex items-center gap-2">
@@ -626,7 +782,7 @@ const App: React.FC = () => {
                         onClick={() => toggleSolo(track.id)}
                         className={`p-2 rounded-lg transition-all ${track.isSoloed ? 'bg-pink-500 text-slate-900' : 'bg-slate-800 text-slate-500 hover:text-white'}`}
                       >
-                        <Headphones className="w-3.5 h-3.5" />
+                      <Headphones className="w-3.5 h-3.5" />
                       </button>
                       <button 
                         onClick={() => toggleMute(track.id)}
@@ -635,36 +791,42 @@ const App: React.FC = () => {
                         {track.isMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
                       </button>
                     </div>
-                    <input 
-                      type="range" min="0" max="2.0" step="0.01"
-                      value={track.volume}
-                      onChange={(e) => updateTrackVolume(track.id, parseFloat(e.target.value))}
-                      className="flex-1 h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-pink-500"
-                    />
+                     <label className="flex items-center gap-2 text-[10px] normal-case tracking-normal">
+                      <span className="text-slate-400">BPM</span>
+                      <input
+                        type="range"
+                        min="40"
+                        max="240"
+                        step="1"
+                        value={track.targetBpm ?? track.profile?.bpm ?? globalBpm}
+                        onChange={(e) => changeTrackBpm(track.id, parseInt(e.target.value || '0', 10))}
+                        className="w-16 bg-slate-800 text-white rounded px-1 py-1 text-[15px] font-bold outline-none"
+                      />
+                      <span className="text-white text-xs font-bold w-8 text-center tabular-nums">
+                        {Math.round(track.targetBpm ?? track.profile?.bpm ?? globalBpm)}
+                      </span>
+                    </label>
+ 
+                    <label className="flex items-center gap-2 text-[10px] normal-case tracking-normal">
+                      <Timer className="w-3 h-3 text-slate-80" />
+                      <input 
+                        type="range" min="0" max="2.0" step="0.01"
+                        value={track.volume}
+                        onChange={(e) => updateTrackVolume(track.id, parseFloat(e.target.value))}
+                        className="w-16 bg-slate-800 text-white rounded px-2 py-1 text-[15px] font-bold outline-none"
+                      />
+                      <span className="text-white text-xs font-bold w-8 text-center tabular-nums">
+                        {(track.volume * 100).toFixed(0)}
+                      </span>
+                     </label>
                   </div>
 
-                  <div className="grid grid-cols-[repeat(21,minmax(0,1fr))] gap-0.5 h-10">
-                    {(track.profile?.sequence || Array(21).fill(null)).map((note, i) => (
-                      <div 
-                        key={i} 
-                        className={`rounded-sm transition-all duration-150 relative ${
-                          activeStep === i && !track.isMuted && (!isAnySoloed || track.isSoloed) ? 'bg-pink-500/60 shadow-lg shadow-pink-500/20 scale-y-110 z-10' : 'bg-slate-800/30'
-                        }`}
-                      >
-                        {note && (
-                          <div 
-                            className={`absolute bottom-0 left-0 right-0 rounded-sm transition-all ${
-                              activeStep === i && !track.isMuted && (!isAnySoloed || track.isSoloed) ? 'bg-white/50' : ''
-                            }`}
-                            style={{ 
-                              height: `${Math.min(100, (note.intensity * 100))}%`,
-                              backgroundColor: track.isMuted ? '#334155' : `rgb(${track.profile.rgb.r}, ${track.profile.rgb.g}, ${track.profile.rgb.b}, 0.4)`
-                            }}
-                          />
-                        )}
-                      </div>
-                    ))}
-                  </div>
+                  <AudioVisualizer
+                    isPlaying={wavAudioEngine.isTrackPlaying(track.id)}
+                    audioBuffer={wavAudioEngine.getTrackAudioBuffer(track.id)}
+                    audioContext={wavAudioEngine.getAudioContextIfAvailable()}
+                    getCurrentTime={() => wavAudioEngine.getTrackCurrentTime(track.id)}
+                  />
                 </div>
               </div>
             );
