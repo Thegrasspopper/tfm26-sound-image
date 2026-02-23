@@ -1,3 +1,5 @@
+import type { SonicTrack } from "../types";
+
 export class WavAudioPlayer {
   private audioBuffer: AudioBuffer | null = null;
   private sourceNode: AudioBufferSourceNode | null = null;
@@ -53,6 +55,7 @@ export class WavAudioPlayer {
 
     const source = ctx.createBufferSource();
     source.buffer = this.audioBuffer;
+    source.loop = true;
     source.connect(this.getGainNode());
 
     source.onended = () => {
@@ -72,7 +75,9 @@ export class WavAudioPlayer {
     const ctx = this.getContextFn();
     if (!this.isPlayingInternal || !this.sourceNode) return;
 
-    this.pausedOffset = Math.max(0, ctx.currentTime - this.startedAt);
+    const duration = this.audioBuffer?.duration ?? 0;
+    const elapsed = Math.max(0, ctx.currentTime - this.startedAt);
+    this.pausedOffset = duration > 0 ? elapsed % duration : 0;
     this.isPlayingInternal = false;
 
     const source = this.sourceNode;
@@ -113,10 +118,12 @@ export class WavAudioPlayer {
   public getCurrentTime(): number {
     if (!this.audioBuffer) return 0;
     const ctx = this.getContextFn();
+    const duration = this.audioBuffer.duration;
     if (this.isPlayingInternal) {
-      return Math.min(this.audioBuffer.duration, ctx.currentTime - this.startedAt);
+      if (duration <= 0) return 0;
+      return (ctx.currentTime - this.startedAt) % duration;
     }
-    return Math.min(this.audioBuffer.duration, this.pausedOffset);
+    return Math.min(duration, this.pausedOffset);
   }
 
   public getDuration(): number {
@@ -164,6 +171,8 @@ export class WavAudioEngine {
     () => this.getMasterGainNode()
   );
   private players = new Set<WavAudioPlayer>();
+  private trackPlayers = new Map<string, WavAudioPlayer>();
+  private activeTracks: SonicTrack[] = [];
   private masterVolume = 1;
 
   constructor() {
@@ -191,12 +200,65 @@ export class WavAudioEngine {
   }
 
   public async playAll(): Promise<void> {
-    const playable = Array.from(this.players).filter((player) => player.hasLoadedBuffer());
+    this.applyTrackMixState();
+    const trackBoundPlayers = new Set(this.trackPlayers.values());
+    const trackPlayable = this.activeTracks
+      .map((track) => this.trackPlayers.get(track.id))
+      .filter((player): player is WavAudioPlayer => !!player && player.hasLoadedBuffer());
+
+    const fallbackPlayable = Array.from(this.players).filter(
+      (player) => !trackBoundPlayers.has(player) && player.hasLoadedBuffer()
+    );
+
+    const playable = trackPlayable.length > 0 ? trackPlayable : fallbackPlayable;
     await Promise.all(playable.map((player) => player.play()));
   }
 
   public hasAnyLoadedBuffer(): boolean {
     return Array.from(this.players).some((player) => player.hasLoadedBuffer());
+  }
+
+  public updateTracks(tracks: SonicTrack[]): void {
+    this.activeTracks = tracks;
+
+    const liveIds = new Set(tracks.map((track) => track.id));
+    for (const [trackId, player] of this.trackPlayers.entries()) {
+      if (liveIds.has(trackId)) continue;
+      player.unload();
+      this.players.delete(player);
+      this.trackPlayers.delete(trackId);
+    }
+
+    this.applyTrackMixState();
+  }
+
+  public async loadTrackFromUrl(trackId: string, url: string): Promise<AudioBuffer> {
+    const player = this.getOrCreateTrackPlayer(trackId);
+    const buffer = await player.loadFromUrl(url);
+    this.applyTrackMixState();
+    return buffer;
+  }
+
+  public async loadTrackFromFile(trackId: string, file: File): Promise<AudioBuffer> {
+    const player = this.getOrCreateTrackPlayer(trackId);
+    const buffer = await player.loadFromFile(file);
+    this.applyTrackMixState();
+    return buffer;
+  }
+
+  public async loadTrackFromBlob(trackId: string, blob: Blob): Promise<AudioBuffer> {
+    const player = this.getOrCreateTrackPlayer(trackId);
+    const buffer = await player.loadFromBlob(blob);
+    this.applyTrackMixState();
+    return buffer;
+  }
+
+  public removeTrack(trackId: string): void {
+    const player = this.trackPlayers.get(trackId);
+    if (!player) return;
+    player.unload();
+    this.players.delete(player);
+    this.trackPlayers.delete(trackId);
   }
 
   public setMasterVolume(volume: number): void {
@@ -257,6 +319,31 @@ export class WavAudioEngine {
 
   public unload(): void {
     this.defaultPlayer.unload();
+  }
+
+  private getOrCreateTrackPlayer(trackId: string): WavAudioPlayer {
+    const existing = this.trackPlayers.get(trackId);
+    if (existing) return existing;
+
+    const player = new WavAudioPlayer(
+      () => this.getContext(),
+      () => this.getMasterGainNode()
+    );
+    this.trackPlayers.set(trackId, player);
+    this.players.add(player);
+    return player;
+  }
+
+  private applyTrackMixState(): void {
+    if (this.activeTracks.length === 0) return;
+    const isAnySoloed = this.activeTracks.some((track) => track.isSoloed);
+
+    this.activeTracks.forEach((track) => {
+      const player = this.trackPlayers.get(track.id);
+      if (!player) return;
+      const canPlay = isAnySoloed ? track.isSoloed : !track.isMuted;
+      player.setVolume(canPlay ? (track.volume ?? 1) : 0);
+    });
   }
 
   private getContext(): AudioContext {

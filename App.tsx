@@ -46,10 +46,12 @@ const App: React.FC = () => {
 
   useEffect(() => {
     synth.setMasterVolume(masterVolume);
+    wavAudioEngine.setMasterVolume(masterVolume);
   }, [masterVolume]);
 
   useEffect(() => {
     synth.updateTracks(tracks);
+    wavAudioEngine.updateTracks(tracks);
   }, [tracks]);
 
   useEffect(() => {
@@ -233,10 +235,10 @@ const App: React.FC = () => {
       };
 
       const falResult = await runTextoToAuidoWithFalAce(falInput);
-      await wavAudioEngine.loadFromUrl(falResult.audio.url);
-      await wavAudioEngine.play();
-
       console.log("Result: ", falResult);
+      await wavAudioEngine.loadTrackFromUrl(id, falResult.audio.url);
+      await wavAudioEngine.playAll();
+
       } catch (err: any) {
         setTracks(prev => prev.filter(t => t.id !== id));
         setGlobalError(err.message || "Failed to analyze image.");

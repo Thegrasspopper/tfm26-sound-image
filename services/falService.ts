@@ -19,8 +19,8 @@ export interface FalTextToAudioAceResult {
   instrumental?: boolean;
   duration?: number;
   number_of_steps?: number;
-  scheduler?: string;
-  guidance_type?: string;
+  scheduler?: "euler" | "heun";
+  guidance_type?: "cfg" | "apg" | "cfg_star";
   granularity_scale?: number;
   guidance_interval?: number;
   guidance_interval_decay?: number;
