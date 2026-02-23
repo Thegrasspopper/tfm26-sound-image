@@ -1,14 +1,12 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Play, Pause, RefreshCw, Image as ImageIcon, Sparkles, AlertCircle, Music, Plus, Trash2, Volume2, VolumeX, Palette, Timer, Headphones, Square, Circle, Wand2, ChevronUp, Loader2, Download } from 'lucide-react';
+import { Play, Pause, RefreshCw, Image as  Sparkles,  Music, Plus, Trash2, Volume2, VolumeX, Palette, Timer, Headphones, Square, Circle, Wand2, ChevronUp, Loader2, Download, Upload } from 'lucide-react';
 // @ts-ignore
 import MIDISoundsModule, { MIDISounds } from './services/deprecated/midisoundsreact';
 import { AppStatus, SonicTrack, InstrumentType, getInstrumentsForGenre, FilterState } from './types';
 import { composeFromImage } from './services/geminiService';
-import { synth } from './services/deprecated/synthEngine';
-import { getAllRequiredInstruments, getAllRequiredDrums } from './services/deprecated/midiMapping';
 import { SonicProfile } from './types';
-import { runFalAudioToAudio, runTextoToAuidoWithFalAce, FalAudioToAudioInput,FalTextToAudioAceResult } from './services/falService';
+import { runTextoToAuidoWithFalAce, FalTextToAudioAceResult } from './services/falService';
 import { wavAudioEngine } from "./services/wavAudioEngine";
 
 // Handle potential ESM wrapping of the CJS library
@@ -33,24 +31,23 @@ const App: React.FC = () => {
 
   const midiSoundsRef = useRef<any>(null);
   const recordingIntervalRef = useRef<any>(null);
+  const projectImportInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (midiSoundsRef.current) {
-        synth.setMidiSounds(midiSoundsRef.current);
+        //synth.setMidiSounds(midiSoundsRef.current);
     }
   }, [midiSoundsRef.current]);
 
   useEffect(() => {
-    synth.setBpm(globalBpm);
+    wavAudioEngine.setTargetBpm(globalBpm);
   }, [globalBpm]);
 
   useEffect(() => {
-    synth.setMasterVolume(masterVolume);
     wavAudioEngine.setMasterVolume(masterVolume);
   }, [masterVolume]);
 
   useEffect(() => {
-    synth.updateTracks(tracks);
     wavAudioEngine.updateTracks(tracks);
   }, [tracks]);
 
@@ -76,6 +73,87 @@ const App: React.FC = () => {
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
+  const exportProject = () => {
+    const payload = {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      globalBpm,
+      globalGenre,
+      masterVolume,
+      tracks,
+    };
+
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `sonic-palette-project-${new Date().toISOString().slice(0,19).replace(/:/g, '-')}.json`;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 100);
+  };
+
+  const restoreTrackAudio = async (nextTracks: SonicTrack[]) => {
+    const withAudio = nextTracks.filter((t) => typeof t.audioUrl === 'string' && t.audioUrl.length > 0);
+    if (withAudio.length === 0) return;
+
+    await Promise.allSettled(
+      withAudio.map((track) => wavAudioEngine.loadTrackFromUrl(track.id, track.audioUrl as string))
+    );
+  };
+
+  const handleImportProject = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const parsed = JSON.parse(await file.text());
+      if (!parsed || !Array.isArray(parsed.tracks)) {
+        throw new Error('Invalid project file.');
+      }
+
+      const importedTracks: SonicTrack[] = parsed.tracks.map((t: any, index: number) => ({
+        id: String(t.id || `track_${index}_${Date.now()}`),
+        image: String(t.image || ''),
+        profile: t.profile,
+        audioUrl: typeof t.audioUrl === 'string' ? t.audioUrl : undefined,
+        audioPrompt: typeof t.audioPrompt === 'string' ? t.audioPrompt : undefined,
+        targetBpm: typeof t.targetBpm === 'number' ? t.targetBpm : undefined,
+        selectedInstrument: t.selectedInstrument,
+        genre: String(t.genre || parsed.globalGenre || globalGenre),
+        isMuted: !!t.isMuted,
+        isSoloed: !!t.isSoloed,
+        volume: typeof t.volume === 'number' ? t.volume : 0.8,
+        status: t.status ?? AppStatus.READY,
+        filters: t.filters ?? { brightness: 100, contrast: 100, saturation: 100, r: 100, g: 100, b: 100 },
+      }));
+
+      stopPlayback();
+      const nextGlobalBpm = typeof parsed.globalBpm === 'number' ? parsed.globalBpm : globalBpm;
+      const nextGenre = typeof parsed.globalGenre === 'string' ? parsed.globalGenre : globalGenre;
+      const nextMasterVolume = typeof parsed.masterVolume === 'number' ? parsed.masterVolume : masterVolume;
+
+      setGlobalBpm(nextGlobalBpm);
+      setGlobalGenre(nextGenre);
+      setMasterVolume(nextMasterVolume);
+      setTracks(importedTracks);
+      wavAudioEngine.updateTracks(importedTracks);
+      await restoreTrackAudio(importedTracks);
+      // Force a rerender after async audio buffers finish loading so the Play button re-evaluates.
+      setTracks((prev) => [...prev]);
+      setGlobalError(null);
+      startPlayback();
+    } catch (err: any) {
+      console.error('Project import failed', err);
+      setGlobalError(err?.message || 'Failed to import project.');
+    } finally {
+      e.target.value = '';
+    }
+  };
+
   const getWpAppConfig = () => {
     const windowWpApp = (window as any)?.WP_APP || {};
     const envWpApp = {
@@ -84,17 +162,6 @@ const App: React.FC = () => {
 
     // Local .env.local values provide defaults; runtime window.WP_APP can override them.
     return { ...envWpApp, ...windowWpApp };
-  };
-
-  const waitForMidiEngine = async (timeoutMs: number = 8000) => {
-    const startedAt = Date.now();
-    while (!midiSoundsRef.current) {
-      if (Date.now() - startedAt > timeoutMs) {
-        throw new Error('MIDI engine did not initialize in time.');
-      }
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
-    synth.setMidiSounds(midiSoundsRef.current);
   };
 
   const uploadSequenceBlobToWp = async (
@@ -139,55 +206,6 @@ const App: React.FC = () => {
     return response.json();
   };
 
-  
-  const autoExportAndUploadTrack = async (
-    trackId: string,
-    profile: SonicProfile,
-    genre: string,
-    volume: number
-  ) => {
-    setExportingTrackId(trackId);
-    try {
-      await waitForMidiEngine();
-      const bpmToUse = profile.bpm || globalBpm;
-      const blob = await synth.exportSequenceToMp3(
-        profile.sequence,
-        profile.suggestedInstrument,
-        bpmToUse,
-        volume
-      );
-      const uploadResult = await uploadSequenceBlobToWp(blob, {
-        trackId,
-        profile,
-        genre,
-        instrument: profile.suggestedInstrument,
-        bpm: bpmToUse,
-      });
-      console.log(`Track ${trackId}: sequence MP3 exported and uploaded to WP. ${uploadResult.status} ${uploadResult.url}`);
-      if (!uploadResult?.url) {
-        throw new Error("Upload response missing public audio URL required by Fal (uploadResult.url).");
-      }
-
-      const falInput: FalAudioToAudioInput = {
-        prompt: `Create a ${genre} track with this texture: ${profile.textureDescription}`,
-        audio_url: uploadResult.url,
-        strength: 0.65,
-        total_seconds: 5,
-        guidance_scale: 15,
-      };
-
-      const falResult = await runFalAudioToAudio(falInput);
-
-      console.log("Fal audio-to-audio result:", falResult);
-    } catch (err: any) {
-      console.error(`Track ${trackId}: auto export/upload failed`, err);
-      setGlobalError(err?.message || 'Failed to export and upload sequence MP3.');
-    } finally {
-      setExportingTrackId(prev => (prev === trackId ? null : prev));
-    }
-  };
-
-
 
   // Add a new image.
   const addTrack = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -207,6 +225,7 @@ const App: React.FC = () => {
         image: imageData,
         status: AppStatus.ANALYZING,
         genre: globalGenre,
+        targetBpm: globalBpm,
         isMuted: false,
         isSoloed: false,
         volume: 0.8,
@@ -222,13 +241,15 @@ const App: React.FC = () => {
         setTracks(prev => prev.map(t => t.id === id ? { 
           ...t, 
           profile: result, 
+          targetBpm: t.targetBpm ?? result.bpm,
           status: AppStatus.READY,
           selectedInstrument: result.suggestedInstrument
         } : t));
-        setGlobalError(null);
+       
 
+      const audioPrompt = `Create an ${result.feelings[0]} ${result.musicGenre} instrumental perfect for a ${result.mood} mood, featuring ${result.suggestedInstrument} with a BPM of ${result.bpm}`;
       const falInput: FalTextToAudioAceResult = {
-        prompt: `Create an ${result.feelings[0]} ${result.musicGenre} instrumental perfect for a ${result.mood} mood, featuring ${result.suggestedInstrument} with a BPM of ${result.bpm}`,
+        prompt: audioPrompt,
         guidance_scale: 15,
         instrumental: true,
         duration: 5,
@@ -236,8 +257,10 @@ const App: React.FC = () => {
 
       const falResult = await runTextoToAuidoWithFalAce(falInput);
       console.log("Result: ", falResult);
+      setTracks(prev => prev.map(t => t.id === id ? { ...t, audioUrl: falResult.audio.url, audioPrompt } : t));
+      setGlobalError(null);
       await wavAudioEngine.loadTrackFromUrl(id, falResult.audio.url);
-      await wavAudioEngine.playAll();
+      startPlayback();
 
       } catch (err: any) {
         setTracks(prev => prev.filter(t => t.id !== id));
@@ -251,25 +274,7 @@ const App: React.FC = () => {
   };
 
   const regenerateTrack = async (id: string) => {
-    const track = tracks.find(t => t.id === id);
-    if (!track) return;
-
-    setTracks(prev => prev.map(t => t.id === id ? { ...t, status: AppStatus.ANALYZING } : t));
-    
-    try {
-      const base64Data = track.image.split(',')[1];
-      const result = await composeFromImage(base64Data, track.genre);
-      setTracks(prev => prev.map(t => t.id === id ? { 
-        ...t, 
-        profile: result, 
-        status: AppStatus.READY,
-        selectedInstrument: result.suggestedInstrument
-      } : t));
-      void autoExportAndUploadTrack(id, result, track.genre, track.volume ?? 0.8);
-    } catch (err: any) {
-      setTracks(prev => prev.map(t => t.id === id ? { ...t, status: AppStatus.READY } : t));
-      setGlobalError("Style shift failed.");
-    }
+      console.log("Not in use")
   };
 
   const removeTrack = (id: string) => {
@@ -306,6 +311,11 @@ const App: React.FC = () => {
     }));
   };
 
+  const changeTrackBpm = (id: string, bpm: number) => {
+    const next = Math.max(40, Math.min(240, Math.round(bpm || 0)));
+    setTracks(prev => prev.map(t => t.id === id ? { ...t, targetBpm: next } : t));
+  };
+
   const updateFilters = (id: string, key: keyof FilterState, val: number) => {
     setTracks(prev => prev.map(t => t.id === id ? { 
       ...t, 
@@ -333,70 +343,12 @@ const App: React.FC = () => {
 
   const handleToggleRecording = async () => {
     if (!isRecording) {
-      setIsRecording(true);
-      synth.startRecording();
-    } else {
-      setIsRecording(false);
-      setIsEncoding(true);
-      try {
-        const blob = await synth.stopRecording();
-        if (blob && blob.size > 0) {
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.style.display = 'none';
-          a.href = url;
-          // Check for mp3/mpeg in the blob type for proper extension
-          const isMp3 = blob.type.includes('mp3') || blob.type.includes('mpeg');
-          const extension = isMp3 ? 'mp3' : 'webm';
-          a.download = `SonicPalette_Master_${new Date().toISOString().slice(0,19).replace(/:/g, '-')}.${extension}`;
-          document.body.appendChild(a);
-          a.click();
-          setTimeout(() => {
-            document.body.removeChild(a);
-            window.URL.revokeObjectURL(url);
-          }, 100);
-        }
-      } catch (e) {
-        console.error("Recording export failed", e);
-      } finally {
-        setIsEncoding(false);
-      }
+      console.log("Not in use")
     }
   };
 
   const exportTrackSequenceAsMp3 = async (track: SonicTrack) => {
-    if (!track.profile?.sequence?.length) return;
-
-    if (isPlaying) {
-      stopPlayback();
-    }
-
-    setExportingTrackId(track.id);
-    try {
-      const blob = await synth.exportSequenceToMp3(
-        track.profile.sequence,
-        track.selectedInstrument,
-        globalBpm,
-        track.volume ?? 1
-      );
-
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.style.display = 'none';
-      a.href = url;
-      a.download = `SonicPalette_Sequence_${track.id}_${new Date().toISOString().slice(0,19).replace(/:/g, '-')}.mp3`;
-      document.body.appendChild(a);
-      a.click();
-      setTimeout(() => {
-        document.body.removeChild(a);
-        window.URL.revokeObjectURL(url);
-      }, 100);
-    } catch (e: any) {
-      console.error("Sequence MP3 export failed", e);
-      setGlobalError(e?.message || "Failed to export sequence as MP3.");
-    } finally {
-      setExportingTrackId(null);
-    }
+    console.log("Not in use")
   };
 
   const fetchSunoResults = async () => {
@@ -420,31 +372,10 @@ const App: React.FC = () => {
   };
 
   const isAnySoloed = tracks.some(t => t.isSoloed);
+  const canPlayWav = wavAudioEngine.hasAnyLoadedBuffer() && !isEncoding;
 
   return (
     <div className="min-h-screen p-4 md:p-8 flex flex-col items-center max-w-7xl mx-auto transition-all duration-1000">
-      
-      {MIDISounds && (
-        <MIDISounds 
-          ref={midiSoundsRef} 
-          instruments={getAllRequiredInstruments()} 
-          drums={getAllRequiredDrums()}
-        />
-      )}
-
-      <svg className="hidden">
-        {tracks.map((t: { id: any; filters: { r: number; g: number; b: number; }; }) => (
-          <filter key={`filter-${t.id}`} id={`rgb-filter-${t.id}`}>
-            <feColorMatrix type="matrix" values={`
-              ${t.filters.r/100} 0 0 0 0
-              0 ${t.filters.g/100} 0 0 0
-              0 0 ${t.filters.b/100} 0 0
-              0 0 0 1 0
-            `} />
-          </filter>
-        ))}
-      </svg>
-
       <div className="fixed inset-0 pointer-events-none opacity-20 transition-opacity duration-1000" style={{ 
         background: tracks.length > 0 
           ? `radial-gradient(circle at 50% 50%, rgb(${tracks[0].profile?.rgb.r || 15}, ${tracks[0].profile?.rgb.g || 23}, ${tracks[0].profile?.rgb.b || 42}), transparent)`
@@ -470,11 +401,13 @@ const App: React.FC = () => {
             <div className="flex items-center gap-4">
               <button
                 onClick={isPlaying ? stopPlayback : startPlayback}
-                disabled={!wavAudioEngine.hasAnyLoadedBuffer() || isEncoding}
+                disabled={!canPlayWav}
                 className={`w-16 h-16 rounded-full flex items-center justify-center transition-all transform active:scale-90 shadow-xl z-10 ${
                   isPlaying 
                     ? 'bg-red-500 text-white shadow-red-500/20' 
-                    : 'bg-white text-slate-900 hover:bg-slate-100 shadow-white/10 disabled:opacity-20 disabled:cursor-not-allowed'
+                    : canPlayWav
+                      ? 'bg-emerald-400 text-slate-950 hover:bg-emerald-300 shadow-emerald-500/30 ring-2 ring-emerald-200/40'
+                      : 'bg-slate-700 text-slate-500 shadow-none opacity-50 cursor-not-allowed'
                 }`}
               >
                 {isPlaying ? <Pause className="w-8 h-8 fill-current" /> : <Play className="w-8 h-8 fill-current ml-1" />}
@@ -561,26 +494,33 @@ const App: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-4 w-full lg:w-auto">
-            <label className="cursor-pointer group flex-1 lg:flex-initial">
-              <input type="file" accept="image/*" className="hidden" onChange={addTrack} disabled={isProcessing} />
-              <div className="bg-pink-600 hover:bg-pink-500 text-white transition-all flex items-center justify-center gap-3 py-4 px-8 rounded-2xl font-bold border border-white/10 shadow-lg active:scale-95 whitespace-nowrap">
-                {isProcessing ? <RefreshCw className="w-5 h-5 animate-spin" /> : <Plus className="w-5 h-5" />}
-                Analyze Image
-              </div>
-            </label>
-
             <button
-              onClick={fetchSunoResults}
-              disabled={sunoLoading}
-              className={`flex items-center gap-2 py-3 px-4 rounded-2xl font-bold border border-white/10 shadow-lg ${sunoLoading ? 'bg-slate-700 text-slate-300 cursor-wait' : 'bg-slate-800 text-white hover:bg-slate-700'}`}
+              onClick={exportProject}
+              disabled={tracks.length === 0}
+              className={`flex items-center gap-2 py-3 px-4 rounded-2xl font-bold border border-white/10 shadow-lg ${
+                tracks.length === 0
+                  ? 'bg-slate-700 text-slate-300 cursor-not-allowed'
+                  : 'bg-emerald-700 text-white hover:bg-emerald-600'
+              }`}
             >
-              {sunoLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-              <span className="hidden sm:inline">Fetch Suno</span>
+              <Download className="w-4 h-4" />
+              <span className="hidden sm:inline">Export</span>
             </button>
 
-            {sunoError && (
-              <div className="text-xs text-red-400 ml-2">{sunoError}</div>
-            )}
+            <input
+              ref={projectImportInputRef}
+              type="file"
+              accept="application/json,.json"
+              className="hidden"
+              onChange={handleImportProject}
+            />
+            <button
+              onClick={() => projectImportInputRef.current?.click()}
+              className="flex items-center gap-2 py-3 px-4 rounded-2xl font-bold border border-white/10 shadow-lg bg-slate-800 text-white hover:bg-slate-700"
+            >
+              <Upload className="w-4 h-4" />
+              <span className="hidden sm:inline">Import</span>
+            </button>
           </div>
         </section>
 
@@ -620,25 +560,17 @@ const App: React.FC = () => {
 
                     <div className="flex justify-between items-center mb-4">
                       <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-pink-400 flex items-center gap-2">
-                        <Palette className="w-3 h-3" /> Color Modulation
+                        <Music className="w-3 h-3" /> Audio Prompt
                       </h4>
                     </div>
                     
-                    <div className="grid grid-cols-2 gap-x-6 gap-y-4">
-                      {['brightness', 'contrast', 'saturation', 'r', 'g', 'b'].map((filter) => (
-                        <div key={filter} className="space-y-1">
-                          <div className="flex justify-between text-[8px] font-black text-slate-500 uppercase tracking-widest">
-                            <span>{filter}</span>
-                            <span className="text-pink-500">{track.filters[filter as keyof FilterState]}</span>
-                          </div>
-                          <input 
-                            type="range" min="0" max="255" step="1" 
-                            value={track.filters[filter as keyof FilterState]} 
-                            onChange={(e) => updateFilters(track.id, filter as any, parseInt(e.target.value))}
-                            className="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-pink-500"
-                          />
-                        </div>
-                      ))}
+                    <div className="rounded-xl border border-white/10 bg-slate-900/50 p-3">
+                      <p className="text-[9px] font-black uppercase tracking-[0.16em] text-slate-400 mb-2">
+                        Prompt used for text-to-audio
+                      </p>
+                      <p className="text-xs leading-relaxed text-slate-200 break-words">
+                        {track.audioPrompt || 'No audio prompt saved for this track yet.'}
+                      </p>
                     </div>
                   </div>
 
@@ -673,31 +605,19 @@ const App: React.FC = () => {
 
                 <div className="p-5 bg-slate-900/40 flex flex-col gap-4">
                   <div className="flex justify-between items-center text-[10px] font-black text-slate-500 uppercase tracking-widest">
-                    <div className="flex items-center gap-2">
-                      <select 
-                        value={track.genre}
-                        onChange={(e) => changeTrackGenre(track.id, e.target.value)}
-                        className="bg-transparent text-pink-400 text-[10px] font-black outline-none cursor-pointer uppercase tracking-widest"
-                      >
-                        <option value="Techno" className="bg-slate-900">Techno</option>
-                        <option value="Pop" className="bg-slate-900">Pop</option>
-                        <option value="R&B" className="bg-slate-900">R&B</option>
-                        <option value="Reggae" className="bg-slate-900">Reggae</option>
-                        <option value="Dark Trap" className="bg-slate-900">Dark Trap</option>
-                      </select>
-                      <span className="opacity-20">|</span>
-                      <select 
-                        value={track.selectedInstrument}
-                        onChange={(e) => changeInstrument(track.id, e.target.value as InstrumentType)}
-                        className="bg-transparent text-white text-[10px] font-black outline-none cursor-pointer uppercase tracking-widest"
-                      >
-                        {currentInstruments.map(inst => (
-                          <option key={inst.id} value={inst.id} className="bg-slate-900">
-                            {inst.icon} {inst.label}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
+                    <label className="flex items-center gap-2 text-[10px] normal-case tracking-normal">
+                      <Timer className="w-3 h-3 text-slate-400" />
+                      <input
+                        type="range"
+                        min="40"
+                        max="240"
+                        step="1"
+                        value={track.targetBpm ?? track.profile?.bpm ?? globalBpm}
+                        onChange={(e) => changeTrackBpm(track.id, parseInt(e.target.value || '0', 10))}
+                        className="w-40 bg-slate-800 text-white rounded px-2 py-1 text-[15px] font-bold outline-none"
+                      />
+                      <span className="text-slate-400">BPM</span>
+                    </label>
                   </div>
                   
                   <div className="flex items-center gap-4">

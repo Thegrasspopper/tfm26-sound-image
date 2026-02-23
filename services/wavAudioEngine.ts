@@ -6,9 +6,11 @@ export class WavAudioPlayer {
   private gainNode: GainNode | null = null;
 
   private startedAt = 0;
+  private playStartOffset = 0;
   private pausedOffset = 0;
   private isPlayingInternal = false;
   private volume = 1;
+  private playbackRate = 1;
 
   constructor(
     private readonly getContextFn: () => AudioContext,
@@ -56,6 +58,7 @@ export class WavAudioPlayer {
     const source = ctx.createBufferSource();
     source.buffer = this.audioBuffer;
     source.loop = true;
+    source.playbackRate.value = this.playbackRate;
     source.connect(this.getGainNode());
 
     source.onended = () => {
@@ -66,7 +69,8 @@ export class WavAudioPlayer {
     };
 
     this.sourceNode = source;
-    this.startedAt = ctx.currentTime - this.pausedOffset;
+    this.playStartOffset = this.pausedOffset;
+    this.startedAt = ctx.currentTime;
     this.isPlayingInternal = true;
     source.start(0, this.pausedOffset);
   }
@@ -76,8 +80,9 @@ export class WavAudioPlayer {
     if (!this.isPlayingInternal || !this.sourceNode) return;
 
     const duration = this.audioBuffer?.duration ?? 0;
-    const elapsed = Math.max(0, ctx.currentTime - this.startedAt);
-    this.pausedOffset = duration > 0 ? elapsed % duration : 0;
+    const elapsed = Math.max(0, ctx.currentTime - this.startedAt) * this.playbackRate;
+    const position = this.playStartOffset + elapsed;
+    this.pausedOffset = duration > 0 ? position % duration : 0;
     this.isPlayingInternal = false;
 
     const source = this.sourceNode;
@@ -96,6 +101,7 @@ export class WavAudioPlayer {
       source.disconnect();
     }
     this.isPlayingInternal = false;
+    this.playStartOffset = 0;
     this.pausedOffset = 0;
   }
 
@@ -115,13 +121,33 @@ export class WavAudioPlayer {
     }
   }
 
+  public setPlaybackRate(rate: number): void {
+    const nextRate = Number.isFinite(rate) ? Math.max(0.25, Math.min(rate, 4)) : 1;
+    if (nextRate === this.playbackRate) return;
+
+    if (this.isPlayingInternal && this.audioBuffer) {
+      const ctx = this.getContextFn();
+      const duration = this.audioBuffer.duration;
+      const elapsed = Math.max(0, ctx.currentTime - this.startedAt) * this.playbackRate;
+      const position = duration > 0 ? (this.playStartOffset + elapsed) % duration : 0;
+      this.playStartOffset = position;
+      this.startedAt = ctx.currentTime;
+    }
+
+    this.playbackRate = nextRate;
+    if (this.sourceNode) {
+      this.sourceNode.playbackRate.value = this.playbackRate;
+    }
+  }
+
   public getCurrentTime(): number {
     if (!this.audioBuffer) return 0;
     const ctx = this.getContextFn();
     const duration = this.audioBuffer.duration;
     if (this.isPlayingInternal) {
       if (duration <= 0) return 0;
-      return (ctx.currentTime - this.startedAt) % duration;
+      const elapsed = Math.max(0, ctx.currentTime - this.startedAt) * this.playbackRate;
+      return (this.playStartOffset + elapsed) % duration;
     }
     return Math.min(duration, this.pausedOffset);
   }
@@ -174,6 +200,7 @@ export class WavAudioEngine {
   private trackPlayers = new Map<string, WavAudioPlayer>();
   private activeTracks: SonicTrack[] = [];
   private masterVolume = 1;
+  private targetBpm: number | null = null;
 
   constructor() {
     this.players.add(this.defaultPlayer);
@@ -268,6 +295,13 @@ export class WavAudioEngine {
     }
   }
 
+  public setTargetBpm(bpm: number | null): void {
+    const normalized =
+      typeof bpm === "number" && Number.isFinite(bpm) && bpm > 0 ? bpm : null;
+    this.targetBpm = normalized;
+    this.applyTrackMixState();
+  }
+
   // Backward-compatible single-player API (delegates to default player)
   public loadFromUrl(url: string): Promise<AudioBuffer> {
     return this.defaultPlayer.loadFromUrl(url);
@@ -342,6 +376,17 @@ export class WavAudioEngine {
       const player = this.trackPlayers.get(track.id);
       if (!player) return;
       const canPlay = isAnySoloed ? track.isSoloed : !track.isMuted;
+      const originalBpm =
+        typeof track.profile?.bpm === "number" && Number.isFinite(track.profile.bpm) && track.profile.bpm > 0
+          ? track.profile.bpm
+          : null;
+      const trackTargetBpm =
+        typeof track.targetBpm === "number" && Number.isFinite(track.targetBpm) && track.targetBpm > 0
+          ? track.targetBpm
+          : this.targetBpm;
+      const playbackRate =
+        trackTargetBpm && originalBpm ? trackTargetBpm / originalBpm : 1;
+      player.setPlaybackRate(playbackRate);
       player.setVolume(canPlay ? (track.volume ?? 1) : 0);
     });
   }
