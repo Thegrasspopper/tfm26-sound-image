@@ -11,6 +11,7 @@ export class WavAudioPlayer {
   private isPlayingInternal = false;
   private volume = 1;
   private playbackRate = 1;
+  private detuneCents = 0;
 
   constructor(
     private readonly getContextFn: () => AudioContext,
@@ -59,6 +60,7 @@ export class WavAudioPlayer {
     source.buffer = this.audioBuffer;
     source.loop = true;
     source.playbackRate.value = this.playbackRate;
+    source.detune.value = this.detuneCents;
     source.connect(this.getGainNode());
 
     source.onended = () => {
@@ -80,7 +82,7 @@ export class WavAudioPlayer {
     if (!this.isPlayingInternal || !this.sourceNode) return;
 
     const duration = this.audioBuffer?.duration ?? 0;
-    const elapsed = Math.max(0, ctx.currentTime - this.startedAt) * this.playbackRate;
+    const elapsed = Math.max(0, ctx.currentTime - this.startedAt) * this.getEffectivePlaybackRate();
     const position = this.playStartOffset + elapsed;
     this.pausedOffset = duration > 0 ? position % duration : 0;
     this.isPlayingInternal = false;
@@ -128,7 +130,7 @@ export class WavAudioPlayer {
     if (this.isPlayingInternal && this.audioBuffer) {
       const ctx = this.getContextFn();
       const duration = this.audioBuffer.duration;
-      const elapsed = Math.max(0, ctx.currentTime - this.startedAt) * this.playbackRate;
+      const elapsed = Math.max(0, ctx.currentTime - this.startedAt) * this.getEffectivePlaybackRate();
       const position = duration > 0 ? (this.playStartOffset + elapsed) % duration : 0;
       this.playStartOffset = position;
       this.startedAt = ctx.currentTime;
@@ -140,13 +142,34 @@ export class WavAudioPlayer {
     }
   }
 
+  public setDetuneSemitones(semitones: number): void {
+    const nextCents = Number.isFinite(semitones)
+      ? Math.max(-2400, Math.min(2400, semitones * 100))
+      : 0;
+    if (nextCents === this.detuneCents) return;
+
+    if (this.isPlayingInternal && this.audioBuffer) {
+      const ctx = this.getContextFn();
+      const duration = this.audioBuffer.duration;
+      const elapsed = Math.max(0, ctx.currentTime - this.startedAt) * this.getEffectivePlaybackRate();
+      const position = duration > 0 ? (this.playStartOffset + elapsed) % duration : 0;
+      this.playStartOffset = position;
+      this.startedAt = ctx.currentTime;
+    }
+
+    this.detuneCents = nextCents;
+    if (this.sourceNode) {
+      this.sourceNode.detune.value = this.detuneCents;
+    }
+  }
+
   public getCurrentTime(): number {
     if (!this.audioBuffer) return 0;
     const ctx = this.getContextFn();
     const duration = this.audioBuffer.duration;
     if (this.isPlayingInternal) {
       if (duration <= 0) return 0;
-      const elapsed = Math.max(0, ctx.currentTime - this.startedAt) * this.playbackRate;
+      const elapsed = Math.max(0, ctx.currentTime - this.startedAt) * this.getEffectivePlaybackRate();
       return (this.playStartOffset + elapsed) % duration;
     }
     return Math.min(duration, this.pausedOffset);
@@ -191,6 +214,11 @@ export class WavAudioPlayer {
     }
     return this.gainNode;
   }
+
+  private getEffectivePlaybackRate(): number {
+    const detuneMultiplier = Math.pow(2, this.detuneCents / 1200);
+    return this.playbackRate * detuneMultiplier;
+  }
 }
 
 export class WavAudioEngine {
@@ -205,6 +233,9 @@ export class WavAudioEngine {
   private activeTracks: SonicTrack[] = [];
   private masterVolume = 1;
   private targetBpm: number | null = null;
+  private recordingDestination: MediaStreamAudioDestinationNode | null = null;
+  private mediaRecorder: MediaRecorder | null = null;
+  private recordingChunks: BlobPart[] = [];
 
   constructor() {
     this.players.add(this.defaultPlayer);
@@ -304,6 +335,86 @@ export class WavAudioEngine {
       typeof bpm === "number" && Number.isFinite(bpm) && bpm > 0 ? bpm : null;
     this.targetBpm = normalized;
     this.applyTrackMixState();
+  }
+
+  public isRecording(): boolean {
+    return this.mediaRecorder?.state === "recording";
+  }
+
+  public async startRecording(): Promise<void> {
+    const ctx = this.getContext();
+    if (ctx.state === "suspended") {
+      await ctx.resume();
+    }
+    if (this.mediaRecorder?.state === "recording") return;
+
+    const destination = this.getRecordingDestination();
+    const mimeTypeCandidates = [
+      "audio/webm;codecs=opus",
+      "audio/webm",
+      "audio/ogg;codecs=opus",
+    ];
+    const mimeType = mimeTypeCandidates.find((type) => {
+      try {
+        return typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(type);
+      } catch {
+        return false;
+      }
+    });
+
+    this.recordingChunks = [];
+    this.mediaRecorder = mimeType
+      ? new MediaRecorder(destination.stream, { mimeType })
+      : new MediaRecorder(destination.stream);
+
+    this.mediaRecorder.ondataavailable = (event) => {
+      if (event.data && event.data.size > 0) {
+        this.recordingChunks.push(event.data);
+      }
+    };
+
+    this.mediaRecorder.start();
+  }
+
+  public stopRecording(): Promise<Blob | null> {
+    return new Promise((resolve, reject) => {
+      const recorder = this.mediaRecorder;
+      if (!recorder) {
+        resolve(null);
+        return;
+      }
+      if (recorder.state === "inactive") {
+        const blob = this.recordingChunks.length
+          ? new Blob(this.recordingChunks, { type: this.recordingChunks[0] instanceof Blob ? this.recordingChunks[0].type : "audio/webm" })
+          : null;
+        this.recordingChunks = [];
+        this.mediaRecorder = null;
+        resolve(blob);
+        return;
+      }
+
+      recorder.onstop = () => {
+        const type =
+          (this.recordingChunks.find((chunk): chunk is Blob => chunk instanceof Blob)?.type) ||
+          recorder.mimeType ||
+          "audio/webm";
+        const blob = this.recordingChunks.length ? new Blob(this.recordingChunks, { type }) : null;
+        this.recordingChunks = [];
+        this.mediaRecorder = null;
+        resolve(blob);
+      };
+      recorder.onerror = (event: any) => {
+        this.recordingChunks = [];
+        this.mediaRecorder = null;
+        reject(event?.error || new Error("Recording failed."));
+      };
+
+      try {
+        recorder.stop();
+      } catch (err) {
+        reject(err);
+      }
+    });
   }
 
   // Backward-compatible single-player API (delegates to default player)
@@ -417,6 +528,7 @@ export class WavAudioEngine {
       const playbackRate =
         trackTargetBpm && originalBpm ? trackTargetBpm / originalBpm : 1;
       player.setPlaybackRate(playbackRate);
+      player.setDetuneSemitones(track.pitchSemitones ?? 0);
       player.setVolume(canPlay ? (track.volume ?? 1) : 0);
     });
   }
@@ -443,8 +555,20 @@ export class WavAudioEngine {
       this.masterGainNode = ctx.createGain();
       this.masterGainNode.gain.value = this.masterVolume;
       this.masterGainNode.connect(ctx.destination);
+      this.masterGainNode.connect(this.getRecordingDestination());
     }
     return this.masterGainNode;
+  }
+
+  private getRecordingDestination(): MediaStreamAudioDestinationNode {
+    if (!this.recordingDestination) {
+      const ctx = this.getContext();
+      this.recordingDestination = ctx.createMediaStreamDestination();
+      if (this.masterGainNode) {
+        this.masterGainNode.connect(this.recordingDestination);
+      }
+    }
+    return this.recordingDestination;
   }
 }
 

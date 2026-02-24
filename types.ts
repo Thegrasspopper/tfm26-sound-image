@@ -49,6 +49,7 @@ export interface SonicTrack {
   audioUrl?: string;
   audioPrompt?: string;
   targetBpm?: number;
+  pitchSemitones?: number;
   selectedInstrument: InstrumentType;
   genre: string;
   isMuted: boolean;

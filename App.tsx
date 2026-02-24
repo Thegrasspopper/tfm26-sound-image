@@ -142,6 +142,7 @@ const App: React.FC = () => {
         audioUrl: typeof t.audioUrl === 'string' ? t.audioUrl : undefined,
         audioPrompt: typeof t.audioPrompt === 'string' ? t.audioPrompt : undefined,
         targetBpm: typeof t.targetBpm === 'number' ? t.targetBpm : undefined,
+        pitchSemitones: typeof t.pitchSemitones === 'number' ? t.pitchSemitones : 0,
         selectedInstrument: t.selectedInstrument,
         genre: String(t.genre || parsed.globalGenre || globalGenre),
         isMuted: !!t.isMuted,
@@ -227,45 +228,45 @@ const App: React.FC = () => {
   };
 
 
-  // Add a new image.
-  const addTrack = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const readFileAsDataUrl = (file: File): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.onerror = () => reject(new Error(`Failed to read file: ${file.name}`));
+      reader.readAsDataURL(file);
+    });
 
-    setIsProcessing(true);
+  const addTrackFromFile = async (file: File) => {
     const id = Math.random().toString(36).substr(2, 9);
-    
-    const reader = new FileReader();
-    reader.onloadend = async () => {
-      const imageData = reader.result as string;
-      const base64Data = imageData.split(',')[1];
-      
-      const tempTrack: SonicTrack = {
-        id,
-        image: imageData,
-        status: AppStatus.ANALYZING,
-        genre: globalGenre,
-        targetBpm: globalBpm,
-        isMuted: false,
-        isSoloed: false,
-        volume: 0.8,
-        profile: null as any,
-        selectedInstrument: 'kick' as InstrumentType,
-        filters: { brightness: 100, contrast: 100, saturation: 100, r: 100, g: 100, b: 100 }
-      };
-      setTracks(prev => [...prev, tempTrack]);
+    const imageData = await readFileAsDataUrl(file);
+    const base64Data = imageData.split(',')[1];
 
-      try {
-        const result = await composeFromImage(base64Data, globalGenre);
-        console.log("Result:", result);
-        setTracks(prev => prev.map(t => t.id === id ? { 
-          ...t, 
-          profile: result, 
-          targetBpm: t.targetBpm ?? result.bpm,
-          status: AppStatus.READY,
-          selectedInstrument: result.suggestedInstrument
-        } : t));
-       
+    const tempTrack: SonicTrack = {
+      id,
+      image: imageData,
+      status: AppStatus.ANALYZING,
+      genre: globalGenre,
+      targetBpm: globalBpm,
+      pitchSemitones: 0,
+      isMuted: false,
+      isSoloed: false,
+      volume: 0.8,
+      profile: null as any,
+      selectedInstrument: 'kick' as InstrumentType,
+      filters: { brightness: 100, contrast: 100, saturation: 100, r: 100, g: 100, b: 100 }
+    };
+    setTracks(prev => [...prev, tempTrack]);
+
+    try {
+      const result = await composeFromImage(base64Data, globalGenre);
+      console.log("Result:", result);
+      setTracks(prev => prev.map(t => t.id === id ? {
+        ...t,
+        profile: result,
+        targetBpm: t.targetBpm ?? result.bpm,
+        status: AppStatus.READY,
+        selectedInstrument: result.suggestedInstrument
+      } : t));
 
       const audioPrompt = `Create an ${result.feelings[0]} ${result.musicGenre} instrumental perfect for a ${result.mood} mood, featuring ${result.suggestedInstrument} with a BPM of ${result.bpm}`;
       const optionalAceParams = {
@@ -299,16 +300,26 @@ const App: React.FC = () => {
       setGlobalError(null);
       await wavAudioEngine.loadTrackFromUrl(id, falResult.audio.url);
       startPlayback();
+    } catch (err: any) {
+      setTracks(prev => prev.filter(t => t.id !== id));
+      setGlobalError(err.message || "Failed to analyze image.");
+    }
+  };
 
-      } catch (err: any) {
-        setTracks(prev => prev.filter(t => t.id !== id));
-        setGlobalError(err.message || "Failed to analyze image.");
-      } finally {
-        setIsProcessing(false);
+  // Add one or more images from a single file picker action.
+  const addTrack = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []) as File[];
+    if (files.length === 0) return;
+
+    setIsProcessing(true);
+    try {
+      for (const file of files) {
+        await addTrackFromFile(file);
       }
-    };
-    reader.readAsDataURL(file);
-    e.target.value = '';
+    } finally {
+      setIsProcessing(false);
+      e.target.value = '';
+    }
   };
 
   const regenerateTrack = async (id: string) => {
@@ -354,6 +365,11 @@ const App: React.FC = () => {
     setTracks(prev => prev.map(t => t.id === id ? { ...t, targetBpm: next } : t));
   };
 
+  const changeTrackPitch = (id: string, semitones: number) => {
+    const next = Math.max(-12, Math.min(12, Math.round(semitones || 0)));
+    setTracks(prev => prev.map(t => t.id === id ? { ...t, pitchSemitones: next } : t));
+  };
+
   const updateFilters = (id: string, key: keyof FilterState, val: number) => {
     setTracks(prev => prev.map(t => t.id === id ? { 
       ...t, 
@@ -381,7 +397,42 @@ const App: React.FC = () => {
 
   const handleToggleRecording = async () => {
     if (!isRecording) {
-      console.log("Not in use")
+      try {
+        await wavAudioEngine.startRecording();
+        setIsRecording(true);
+        setGlobalError(null);
+      } catch (err: any) {
+        console.error("Recording start failed", err);
+        setGlobalError(err?.message || "Failed to start recording.");
+      }
+      return;
+    }
+
+    setIsRecording(false);
+    setIsEncoding(true);
+    try {
+      const blob = await wavAudioEngine.stopRecording();
+      if (blob && blob.size > 0) {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = url;
+        const isOgg = blob.type.includes('ogg');
+        const isWebm = blob.type.includes('webm');
+        const extension = isOgg ? 'ogg' : isWebm ? 'webm' : 'webm';
+        a.download = `SonicPalette_WAV_Mix_${new Date().toISOString().slice(0,19).replace(/:/g, '-')}.${extension}`;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => {
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+        }, 100);
+      }
+    } catch (err: any) {
+      console.error("Recording stop/export failed", err);
+      setGlobalError(err?.message || "Failed to export recording.");
+    } finally {
+      setIsEncoding(false);
     }
   };
 
@@ -454,7 +505,7 @@ const App: React.FC = () => {
               <div className="flex items-center gap-2 relative">
                 <button
                   onClick={handleToggleRecording}
-                  disabled={tracks.filter(t => t.status === AppStatus.READY).length === 0 || isEncoding}
+                  disabled={!wavAudioEngine.hasAnyLoadedBuffer() || isEncoding}
                   className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all transform active:scale-90 shadow-xl z-10 ${
                     isRecording 
                       ? 'bg-red-600 text-white shadow-red-600/40' 
@@ -819,6 +870,22 @@ const App: React.FC = () => {
                         {(track.volume * 100).toFixed(0)}
                       </span>
                      </label>
+
+                    <label className="flex items-center gap-2 text-[10px] normal-case tracking-normal">
+                      <Music className="w-3 h-3 text-slate-200" />
+                      <input
+                        type="range"
+                        min="-12"
+                        max="12"
+                        step="1"
+                        value={track.pitchSemitones ?? 0}
+                        onChange={(e) => changeTrackPitch(track.id, parseInt(e.target.value || '0', 10))}
+                        className="w-16 bg-slate-800 text-white rounded px-2 py-1 text-[15px] font-bold outline-none"
+                      />
+                      <span className="text-white text-xs font-bold w-10 text-center tabular-nums">
+                        {(track.pitchSemitones ?? 0) > 0 ? `+${track.pitchSemitones}` : (track.pitchSemitones ?? 0)}
+                      </span>
+                    </label>
                   </div>
 
                   <AudioVisualizer
@@ -834,7 +901,7 @@ const App: React.FC = () => {
 
           {tracks.length < 9 && !isProcessing && (
             <label className="border-2 border-dashed border-slate-700 rounded-[2rem] flex flex-col items-center justify-center p-12 text-center text-slate-500 hover:border-pink-500 hover:bg-pink-500/5 transition-all cursor-pointer group min-h-[350px]">
-              <input type="file" accept="image/*" className="hidden" onChange={addTrack} />
+              <input type="file" accept="image/*" multiple className="hidden" onChange={addTrack} />
               <div className="bg-slate-800 p-6 rounded-full group-hover:bg-pink-500 group-hover:text-white transition-all mb-4">
                 <Plus className="w-8 h-8" />
               </div>
