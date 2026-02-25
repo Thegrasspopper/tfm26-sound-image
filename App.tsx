@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Play, Pause, RefreshCw, Image as  Sparkles,  Music, Plus, Trash2, Volume2, VolumeX, Palette, Timer, Headphones, Square, Circle, Wand2, ChevronUp, Loader2, Download, Upload } from 'lucide-react';
+import { Play, Pause, RefreshCw, Image as Sparkles, Music, Plus, Trash2, Volume2, VolumeX, Palette, Timer, Headphones, Square, Circle, Wand2, ChevronUp, Loader2, Download, Upload } from 'lucide-react';
 // @ts-ignore
 import MIDISoundsModule, { MIDISounds } from './services/deprecated/midisoundsreact';
 import { AppStatus, SonicTrack, InstrumentType, getInstrumentsForGenre, FilterState } from './types';
@@ -25,9 +25,9 @@ const App: React.FC = () => {
   const [sunoError, setSunoError] = useState<string | null>(null);
   const [sunoItems, setSunoItems] = useState<any[] | null>(null);
   const [exportingTrackId, setExportingTrackId] = useState<string | null>(null);
-  
+
   const [globalBpm, setGlobalBpm] = useState<number>(120);
-  const [audioDurationSec, setAudioDurationSec] = useState<number>(5);
+  const [audioDurationSec, setAudioDurationSec] = useState<number>(10);
   const [showAdvancedAudio, setShowAdvancedAudio] = useState(false);
   const [audioGenInstrumental, setAudioGenInstrumental] = useState(true);
   const [audioGenGuidanceScale, setAudioGenGuidanceScale] = useState<number>(15);
@@ -49,7 +49,7 @@ const App: React.FC = () => {
 
   useEffect(() => {
     if (midiSoundsRef.current) {
-        //synth.setMidiSounds(midiSoundsRef.current);
+      //synth.setMidiSounds(midiSoundsRef.current);
     }
   }, [midiSoundsRef.current]);
 
@@ -107,7 +107,7 @@ const App: React.FC = () => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `sonic-palette-project-${new Date().toISOString().slice(0,19).replace(/:/g, '-')}.json`;
+    a.download = `sonic-palette-project-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.json`;
     document.body.appendChild(a);
     a.click();
     setTimeout(() => {
@@ -202,7 +202,7 @@ const App: React.FC = () => {
       throw new Error('WP upload endpoint not configured (window.WP_APP.sequenceUploadEndpoint or window.WP_APP.restUrl).');
     }
 
-    const fileName = `sequence_${payload.trackId}_${new Date().toISOString().slice(0,19).replace(/:/g, '-')}.mp3`;
+    const fileName = `sequence_${payload.trackId}_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.mp3`;
     const formData = new FormData();
     formData.append('file', blob, fileName);
     formData.append('track_id', payload.trackId);
@@ -263,12 +263,24 @@ const App: React.FC = () => {
       setTracks(prev => prev.map(t => t.id === id ? {
         ...t,
         profile: result,
-        targetBpm: t.targetBpm ?? result.bpm,
+        targetBpm: t.targetBpm,
         status: AppStatus.READY,
-        selectedInstrument: result.suggestedInstrument
       } : t));
 
-      const audioPrompt = `Create an ${result.feelings[0]} ${result.musicGenre} instrumental perfect for a ${result.mood} mood, featuring ${result.suggestedInstrument} with a BPM of ${result.bpm}`;
+      const audioPrompt = `Create a ${result.emotion.label.toLowerCase()}-inspired minimalist instrumental in ${result.musicalParameters.mode} mode at ${result.musicalParameters.tempo} BPM. 
+          Use ${result.soundDesign.instrument} as the main element, played in the ${result.musicalParameters.register} register with ${result.musicalParameters.articulation} articulation. 
+          Texture should be ${result.soundDesign.texture} with ${result.soundDesign.space}. 
+          Keep it as a single realistic, mix-ready instrumental layer.`;
+
+      const aduioPrompt3 = `Create a ${result.emotion.label.toLowerCase()} instrumental layer 
+            with energy level ${result.emotion.arousal}/100 
+            and harmonic tension level ${result.musicalParameters.harmonic_tension}/10.
+
+            Use ${result.soundDesign.instrument} with ${result.soundDesign.waveform}.
+            Tempo ${result.musicalParameters.tempo} BPM.
+            Keep rhythmic density at level ${result.musicalParameters.rhythmic_density}/10.
+            Minimalist structure, single layer, production-ready realism.`
+
       const optionalAceParams = {
         number_of_steps: parseOptionalAudioParam(audioGenNumberOfSteps),
         granularity_scale: parseOptionalAudioParam(audioGenGranularityScale),
@@ -282,7 +294,7 @@ const App: React.FC = () => {
         prompt: audioPrompt,
         guidance_scale: Math.max(0, audioGenGuidanceScale),
         instrumental: audioGenInstrumental,
-        duration: Math.max(1, Math.min(30, Math.round(audioDurationSec))),
+        duration: Math.max(1, Math.min(60, Math.round(audioDurationSec))),
         scheduler: audioGenScheduler,
         guidance_type: audioGenGuidanceType,
         ...(optionalAceParams.number_of_steps !== undefined ? { number_of_steps: Math.round(optionalAceParams.number_of_steps) } : {}),
@@ -296,7 +308,7 @@ const App: React.FC = () => {
 
       const falResult = await runTextoToAuidoWithFalAce(falInput);
       console.log("Result: ", falResult);
-      setTracks(prev => prev.map(t => t.id === id ? { ...t, audioUrl: falResult.audio.url, audioPrompt } : t));
+      setTracks(prev => prev.map(t => t.id === id ? { ...t, audioUrl: falResult.audio.url, audioPrompt2: audioPrompt } : t));
       setGlobalError(null);
       await wavAudioEngine.loadTrackFromUrl(id, falResult.audio.url);
       startPlayback();
@@ -323,7 +335,7 @@ const App: React.FC = () => {
   };
 
   const regenerateTrack = async (id: string) => {
-      console.log("Not in use")
+    console.log("Not in use")
   };
 
   const removeTrack = (id: string) => {
@@ -371,8 +383,8 @@ const App: React.FC = () => {
   };
 
   const updateFilters = (id: string, key: keyof FilterState, val: number) => {
-    setTracks(prev => prev.map(t => t.id === id ? { 
-      ...t, 
+    setTracks(prev => prev.map(t => t.id === id ? {
+      ...t,
       filters: { ...t.filters, [key]: val }
     } : t));
   };
@@ -420,7 +432,7 @@ const App: React.FC = () => {
         const isOgg = blob.type.includes('ogg');
         const isWebm = blob.type.includes('webm');
         const extension = isOgg ? 'ogg' : isWebm ? 'webm' : 'webm';
-        a.download = `SonicPalette_WAV_Mix_${new Date().toISOString().slice(0,19).replace(/:/g, '-')}.${extension}`;
+        a.download = `SonicPalette_WAV_Mix_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.${extension}`;
         document.body.appendChild(a);
         a.click();
         setTimeout(() => {
@@ -465,9 +477,9 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen p-4 md:p-8 flex flex-col items-center max-w-7xl mx-auto transition-all duration-1000">
-      <div className="fixed inset-0 pointer-events-none opacity-20 transition-opacity duration-1000" style={{ 
-        background: tracks.length > 0 
-          ? `radial-gradient(circle at 50% 50%, rgb(${tracks[0].profile?.rgb.r || 15}, ${tracks[0].profile?.rgb.g || 23}, ${tracks[0].profile?.rgb.b || 42}), transparent)`
+      <div className="fixed inset-0 pointer-events-none opacity-20 transition-opacity duration-1000" style={{
+        background: tracks.length > 0
+          ? `radial-gradient(circle at 50% 50%, transparent)`
           : '#0f172a'
       }} />
 
@@ -484,20 +496,19 @@ const App: React.FC = () => {
       </header>
 
       <main className="w-full flex flex-col gap-6 z-10">
-        
+
         <section className="glass p-6 rounded-[2.5rem] flex flex-col lg:flex-row items-center justify-between gap-8 border-slate-700/30 shadow-2xl overflow-hidden relative">
           <div className="flex flex-wrap items-center gap-6 lg:gap-10">
             <div className="flex items-center gap-4">
               <button
                 onClick={isPlaying ? stopPlayback : startPlayback}
                 disabled={!canPlayWav}
-                className={`w-16 h-16 rounded-full flex items-center justify-center transition-all transform active:scale-90 shadow-xl z-10 ${
-                  isPlaying 
-                    ? 'bg-red-500 text-white shadow-red-500/20' 
+                className={`w-16 h-16 rounded-full flex items-center justify-center transition-all transform active:scale-90 shadow-xl z-10 ${isPlaying
+                    ? 'bg-red-500 text-white shadow-red-500/20'
                     : canPlayWav
                       ? 'bg-emerald-400 text-slate-950 hover:bg-emerald-300 shadow-emerald-500/30 ring-2 ring-emerald-200/40'
                       : 'bg-slate-700 text-slate-500 shadow-none opacity-50 cursor-not-allowed'
-                }`}
+                  }`}
               >
                 {isPlaying ? <Pause className="w-8 h-8 fill-current" /> : <Play className="w-8 h-8 fill-current ml-1" />}
               </button>
@@ -506,13 +517,12 @@ const App: React.FC = () => {
                 <button
                   onClick={handleToggleRecording}
                   disabled={!wavAudioEngine.hasAnyLoadedBuffer() || isEncoding}
-                  className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all transform active:scale-90 shadow-xl z-10 ${
-                    isRecording 
-                      ? 'bg-red-600 text-white shadow-red-600/40' 
+                  className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all transform active:scale-90 shadow-xl z-10 ${isRecording
+                      ? 'bg-red-600 text-white shadow-red-600/40'
                       : isEncoding
                         ? 'bg-slate-700 text-pink-400 cursor-wait'
                         : 'bg-slate-800 text-slate-400 hover:text-white disabled:opacity-20'
-                  }`}
+                    }`}
                 >
                   {isEncoding ? <Loader2 className="w-5 h-5 animate-spin" /> : isRecording ? <Square className="w-5 h-5 fill-current" /> : <Circle className="w-5 h-5 fill-current" />}
                 </button>
@@ -523,20 +533,20 @@ const App: React.FC = () => {
                   </span>
                 )}
               </div>
-              
+
               {(isRecording || isEncoding) && (
                 <div className="hidden sm:block font-mono text-pink-500 font-bold tabular-nums">
                   {isEncoding ? "ENCODING MP3..." : formatTime(recordingTime)}
                 </div>
               )}
             </div>
-            
+
             <div className="space-y-2">
               <div className="flex items-center gap-2 text-[10px] font-black text-slate-500 uppercase tracking-widest">
                 <Timer className="w-3 h-3" /> Master BPM
               </div>
               <div className="flex items-center gap-4">
-                <input 
+                <input
                   type="range" min="60" max="160" step="1"
                   value={globalBpm}
                   onChange={(e) => setGlobalBpm(parseInt(e.target.value))}
@@ -553,7 +563,7 @@ const App: React.FC = () => {
                 <Volume2 className="w-3 h-3 text-indigo-400" /> Master Volume
               </div>
               <div className="flex items-center gap-4">
-                <input 
+                <input
                   type="range" min="0" max="1.5" step="0.01"
                   value={masterVolume}
                   onChange={(e) => setMasterVolume(parseFloat(e.target.value))}
@@ -573,12 +583,12 @@ const App: React.FC = () => {
                 <input
                   type="range"
                   min="1"
-                  max="30"
+                  max="60"
                   step="1"
                   value={audioDurationSec}
                   onChange={(e) => {
                     const next = parseInt(e.target.value || '1', 10);
-                    setAudioDurationSec(Math.max(1, Math.min(30, Number.isFinite(next) ? next : 5)));
+                    setAudioDurationSec(Math.max(1, Math.min(60, Number.isFinite(next) ? next : 10)));
                   }}
                   className="w-16 bg-slate-800/50 text-white text-[12px] font-bold p-2 rounded-lg outline-none border border-white/10"
                 />
@@ -588,22 +598,6 @@ const App: React.FC = () => {
             </div>
 
             <div className="h-10 w-px bg-slate-800 hidden lg:block" />
-
-            <div className="space-y-2">
-              <div className="flex items-center gap-2 text-[10px] font-black text-slate-500 uppercase tracking-widest">
-                <Palette className="w-3 h-3 text-green-400" /> Default Genre
-              </div>
-              <select 
-                value={globalGenre}
-                onChange={(e) => setGlobalGenre(e.target.value)}
-                className="bg-slate-800/50 text-white text-[12px] font-bold p-2 rounded-lg outline-none border border-white/10"
-              >
-                <option value="Techno">Techno</option>
-                <option value="Pop">Pop</option>
-                <option value="R&B">R&B</option>
-                <option value="Reggae">Reggae</option>
-              </select>
-            </div>
 
             <div className="h-10 w-px bg-slate-800 hidden lg:block" />
 
@@ -719,11 +713,10 @@ const App: React.FC = () => {
             <button
               onClick={exportProject}
               disabled={tracks.length === 0}
-              className={`flex items-center gap-2 py-3 px-4 rounded-2xl font-bold border border-white/10 shadow-lg ${
-                tracks.length === 0
+              className={`flex items-center gap-2 py-3 px-4 rounded-2xl font-bold border border-white/10 shadow-lg ${tracks.length === 0
                   ? 'bg-slate-700 text-slate-300 cursor-not-allowed'
                   : 'bg-emerald-700 text-white hover:bg-emerald-600'
-              }`}
+                }`}
             >
               <Download className="w-4 h-4" />
               <span className="hidden sm:inline">Export</span>
@@ -750,11 +743,10 @@ const App: React.FC = () => {
           {tracks.map((track) => {
             const currentInstruments = getInstrumentsForGenre(track.genre);
             return (
-              <div 
-                key={track.id} 
-                className={`glass rounded-[2rem] overflow-hidden flex flex-col border-slate-700/30 transition-all duration-500 group relative ${
-                  track.isMuted || (isAnySoloed && !track.isSoloed) ? 'opacity-40 grayscale-[0.5]' : 'opacity-100'
-                } ${track.isSoloed ? 'ring-2 ring-pink-500/50' : ''}`}
+              <div
+                key={track.id}
+                className={`glass rounded-[2rem] overflow-hidden flex flex-col border-slate-700/30 transition-all duration-500 group relative ${track.isMuted || (isAnySoloed && !track.isSoloed) ? 'opacity-40 grayscale-[0.5]' : 'opacity-100'
+                  } ${track.isSoloed ? 'ring-2 ring-pink-500/50' : ''}`}
               >
                 {track.status === AppStatus.ANALYZING && (
                   <div className="absolute inset-0 bg-slate-900/80 backdrop-blur-md z-30 flex flex-col items-center justify-center gap-4 text-center p-6">
@@ -764,16 +756,16 @@ const App: React.FC = () => {
                 )}
 
                 <div className="relative aspect-video overflow-hidden bg-black">
-                  <img 
-                    src={track.image} 
-                    className="w-full h-full object-cover transition-transform group-hover:scale-110" 
-                    style={{ 
-                      filter: `brightness(${track.filters.brightness}%) contrast(${track.filters.contrast}%) saturate(${track.filters.saturation}%) url(#rgb-filter-${track.id})` 
+                  <img
+                    src={track.image}
+                    className="w-full h-full object-cover transition-transform group-hover:scale-110"
+                    style={{
+                      filter: `brightness(${track.filters.brightness}%) contrast(${track.filters.contrast}%) saturate(${track.filters.saturation}%) url(#rgb-filter-${track.id})`
                     }}
                   />
-                  
+
                   <div className={`absolute bottom-0 left-0 right-0 glass-dark backdrop-blur-2xl border-t border-white/10 z-20 p-4 transition-transform duration-500 ${showSettings === track.id ? 'translate-y-0' : 'translate-y-[calc(100%-40px)]'}`}>
-                    <button 
+                    <button
                       onClick={() => setShowSettings(showSettings === track.id ? null : track.id)}
                       className="w-full h-8 -mt-4 flex items-center justify-center text-slate-400 hover:text-white group/btn"
                     >
@@ -785,64 +777,63 @@ const App: React.FC = () => {
                         <Music className="w-3 h-3" /> Audio Prompt
                       </h4>
                     </div>
-                    
+
                     <div className="rounded-xl border border-white/10 bg-slate-900/50 p-3">
                       <p className="text-[9px] font-black uppercase tracking-[0.16em] text-slate-400 mb-2">
                         Prompt used for text-to-audio
                       </p>
                       <p className="text-xs leading-relaxed text-slate-200 break-words">
-                        {track.audioPrompt || 'No audio prompt saved for this track yet.'}
+                        {track.audioPrompt2 || 'No audio prompt saved for this track yet.'}
                       </p>
                     </div>
                   </div>
 
                   <div className="absolute inset-0 bg-gradient-to-t from-slate-900/90 via-transparent to-transparent pointer-events-none" />
-                  
+
                   <div className="absolute top-4 right-4 flex flex-col gap-2 z-10">
-                      <button
-                        onClick={() => exportTrackSequenceAsMp3(track)}
-                        disabled={exportingTrackId === track.id || track.status !== AppStatus.READY}
-                        className={`p-2 rounded-lg shadow-lg backdrop-blur-sm transition-all ${
-                          exportingTrackId === track.id
-                            ? 'bg-slate-700 text-slate-300 cursor-wait'
-                            : 'bg-emerald-600/90 hover:bg-emerald-500 text-white'
+                    <button
+                      onClick={() => exportTrackSequenceAsMp3(track)}
+                      disabled={exportingTrackId === track.id || track.status !== AppStatus.READY}
+                      className={`p-2 rounded-lg shadow-lg backdrop-blur-sm transition-all ${exportingTrackId === track.id
+                          ? 'bg-slate-700 text-slate-300 cursor-wait'
+                          : 'bg-emerald-600/90 hover:bg-emerald-500 text-white'
                         }`}
-                      >
-                        {exportingTrackId === track.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-                      </button>
-                      <button 
-                        onClick={() => regenerateTrack(track.id)}
-                        className="p-2 bg-pink-600/90 hover:bg-pink-500 text-white rounded-lg shadow-lg backdrop-blur-sm transition-all"
-                      >
-                        <Wand2 className="w-4 h-4" />
-                      </button>
-                      <button 
-                        onClick={() => removeTrack(track.id)}
-                        className="p-2 bg-slate-800/80 text-slate-400 hover:text-red-400 rounded-lg backdrop-blur-sm transition-all"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                    >
+                      {exportingTrackId === track.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                    </button>
+                    <button
+                      onClick={() => regenerateTrack(track.id)}
+                      className="p-2 bg-pink-600/90 hover:bg-pink-500 text-white rounded-lg shadow-lg backdrop-blur-sm transition-all"
+                    >
+                      <Wand2 className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => removeTrack(track.id)}
+                      className="p-2 bg-slate-800/80 text-slate-400 hover:text-red-400 rounded-lg backdrop-blur-sm transition-all"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
                   </div>
                 </div>
 
                 <div className="p-5 bg-slate-900/40 flex flex-col gap-4">
-                  
+
                   <div className="flex items-center gap-4">
                     <div className="flex items-center gap-2">
-                      <button 
+                      <button
                         onClick={() => toggleSolo(track.id)}
                         className={`p-2 rounded-lg transition-all ${track.isSoloed ? 'bg-pink-500 text-slate-900' : 'bg-slate-800 text-slate-500 hover:text-white'}`}
                       >
-                      <Headphones className="w-3.5 h-3.5" />
+                        <Headphones className="w-3.5 h-3.5" />
                       </button>
-                      <button 
+                      <button
                         onClick={() => toggleMute(track.id)}
                         className={`p-2 rounded-lg transition-all ${track.isMuted ? 'bg-red-500/20 text-red-400' : 'bg-slate-800 text-slate-500 hover:text-white'}`}
                       >
                         {track.isMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
                       </button>
                     </div>
-                     <label className="flex items-center gap-2 text-[10px] normal-case tracking-normal">
+                    <label className="flex items-center gap-2 text-[10px] normal-case tracking-normal">
                       <span className="text-slate-400">BPM</span>
                       <input
                         type="range"
@@ -857,10 +848,12 @@ const App: React.FC = () => {
                         {Math.round(track.targetBpm ?? track.profile?.bpm ?? globalBpm)}
                       </span>
                     </label>
- 
+                  </div>
+                  <div>
+
                     <label className="flex items-center gap-2 text-[10px] normal-case tracking-normal">
                       <Timer className="w-3 h-3 text-slate-80" />
-                      <input 
+                      <input
                         type="range" min="0" max="2.0" step="0.01"
                         value={track.volume}
                         onChange={(e) => updateTrackVolume(track.id, parseFloat(e.target.value))}
@@ -869,7 +862,7 @@ const App: React.FC = () => {
                       <span className="text-white text-xs font-bold w-8 text-center tabular-nums">
                         {(track.volume * 100).toFixed(0)}
                       </span>
-                     </label>
+                    </label>
 
                     <label className="flex items-center gap-2 text-[10px] normal-case tracking-normal">
                       <Music className="w-3 h-3 text-slate-200" />

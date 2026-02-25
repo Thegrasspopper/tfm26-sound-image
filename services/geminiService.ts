@@ -4,61 +4,104 @@ import { SonicProfile } from "../types";
 
 export const composeFromImage = async (base64Image: string, genre: string = "Modern Pop"): Promise<SonicProfile> => {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-  
-  const prompt = `Act as a world-class music producer and visual synesthete specialized in "${genre}". 
-  Analyze this image and compose an intricate 21-note melodic/rhythmic sequence.
-  
-  Style Guidelines for requested genre:
-  - Techno: Minimalist, industrial, rhythmic loops, cold textures.
-  - Pop: Catchy hooks, major scales, bright/polished feel.
-  - R&B: Smooth, sultry, jazz-influenced chords, soulful swing.
-  - Reggae: Off-beat accents, dub echoes, relaxed groove, warm low-end.
 
-  Response Requirements:
-  1. Feelings: 3 emotional tags inspired by the visual.
-  2. RGB: Dominant color code.
-  3. Genre: Confirm the sub-style.
-  4. Waveform: Suggested by textures (Pop: clean; Techno: noisy/saw; R&B: smooth sine; Reggae: warm triangle).
-  5. Suggested Instrument: Choose from: 'kick', 'hat', 'snare', 'clap', 'flute', 'vox', 'pad', 'bell', 'rhodes', 'string', 'pluck', 'brass', 'acid', 'rim', 'drone', 'noise'.
-  7. Texture: 1-sentence description of the visual-audio link.
+  const prompt = `Act as a cognitive musicologist and minimalist sound designer.
+              Analyze the emotional content of the input image using the Valence–Arousal–Dominance model.
+
+              STEP 1 — Emotional Quantification:
+              Return numeric values (0–100):
+              - Valence
+              - Arousal
+              - Dominance
+
+              STEP 2 — Emotional Classification:
+              Map the values to one of:
+              - Joy
+              - Tenderness
+              - Sadness
+              - Fear
+              - Anger
+              - Calm
+              - Nostalgia
+              - Empowerment
+
+              STEP 3 — Minimalist Translation Rules:
+
+              Translate the emotional profile into:
+
+              - Tempo (BPM)
+              - Mode (Major / Minor / Modal / Atonal)
+              - Articulation (Staccato / Legato / Mixed)
+              - Register (Low / Mid / High)
+              - Rhythmic Density (1–10)
+              - Harmonic Tension (1–10)
+              - Spectral Brightness (1–10)
+              - Attack Speed (Slow / Medium / Fast)
+
+              STEP 4 — Sound Design:
+              Design a single realistic instrument layer optimized for mixing:
+              - Instrument family
+              - Waveform
+              - Texture descriptor
+              - Spatial depth (Dry / Slight reverb / Large space)
+
+              STEP 5 - Image description:
+              Describe the image and the emotions it evokes in a concise paragraph.
+
   
   Provide strictly valid JSON.`;
-  
+
   const response = await ai.models.generateContent({
     model: 'gemini-3-flash-preview',
-    contents: { 
+    contents: {
       parts: [
         { inlineData: { mimeType: 'image/jpeg', data: base64Image } },
         { text: prompt }
-      ] 
+      ]
     },
     config: {
       responseMimeType: "application/json",
       responseSchema: {
         type: Type.OBJECT,
         properties: {
-          musicGenre: { type: Type.STRING },
-          musicStyle: { type: Type.STRING },
-          feelings: { type: Type.ARRAY, items: { type: Type.STRING } },
-          mood: { type: Type.STRING },
-          bpm: { type: Type.INTEGER },
-          suggestedInstrument: { type: Type.STRING },
-          textureDescription: { type: Type.STRING },
-          rgb: {
+          desctiption: { type: Type.STRING },
+          emotion: {
+            type: Type.OBJECT, properties: {
+              valence: { type: Type.INTEGER },
+              arousal: { type: Type.INTEGER },
+              dominance: { type: Type.INTEGER },
+              label: { type: Type.STRING }
+            },
+            required: ["valence", "arousal", "dominance","label"]
+          },
+          musicalParameters: {
             type: Type.OBJECT,
             properties: {
-              r: { type: Type.INTEGER },
-              g: { type: Type.INTEGER },
-              b: { type: Type.INTEGER }
+              tempo: { type: Type.INTEGER },
+              mode: { type: Type.STRING },
+              articulation: { type: Type.STRING },
+              register: { type: Type.STRING },
+              rhythmic_density: { type: Type.INTEGER },
+              harmonic_tension: { type: Type.INTEGER },
+              spectral_brightness: { type: Type.INTEGER },
+              attack_speed: { type: Type.STRING }
             },
-            required: ["r", "g", "b"]
+            required: ["tempo", "mode", "articulation", "register", "rhythmic_density", "harmonic_tension", "spectral_brightness", "attack_speed"]
           },
-  
+          soundDesign: {
+            type: Type.OBJECT,
+            properties: {
+              instrument: { type: Type.STRING },
+              waveform: { type: Type.STRING },
+              texture: { type: Type.STRING },
+              space: { type: Type.STRING },
+            },
+            required: ["instrument", "waveform", "texture", "space"]
+          }
         },
-        required: ["feelings", "rgb", "mood","musicGenre", "bpm", "musicStyle", "suggestedInstrument",  "textureDescription"]
-      }
+        required: ["emotion", "musicalParameters", "soundDesign"]
     }
-  });
+  }});
 
   try {
     const text = response.text;
