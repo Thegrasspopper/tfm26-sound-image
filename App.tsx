@@ -335,6 +335,7 @@ const App: React.FC = () => {
   };
 
   const regenerateTrack = async (id: string) => {
+    // TODO add function to regenerate the picture and allow user to configured some of the setting before sending.
     console.log("Not in use")
   };
 
@@ -356,20 +357,6 @@ const App: React.FC = () => {
 
   const updateTrackVolume = (id: string, volume: number) => {
     setTracks(prev => prev.map(t => t.id === id ? { ...t, volume } : t));
-  };
-
-  const changeInstrument = (id: string, instrument: InstrumentType) => {
-    setTracks(prev => prev.map(t => t.id === id ? { ...t, selectedInstrument: instrument } : t));
-  };
-
-  const changeTrackGenre = (id: string, genre: string) => {
-    setTracks(prev => prev.map(t => {
-      if (t.id === id) {
-        const instruments = getInstrumentsForGenre(genre);
-        return { ...t, genre, selectedInstrument: instruments[0].id };
-      }
-      return t;
-    }));
   };
 
   const changeTrackBpm = (id: string, bpm: number) => {
@@ -449,7 +436,46 @@ const App: React.FC = () => {
   };
 
   const exportTrackSequenceAsMp3 = async (track: SonicTrack) => {
-    console.log("Not in use")
+    if (!track.audioUrl) {
+      setGlobalError("No generated audio URL is available for this track.");
+      return;
+    }
+
+    try {
+      setExportingTrackId(track.id);
+      setGlobalError(null);
+
+      const response = await fetch(track.audioUrl);
+      if (!response.ok) {
+        throw new Error(`Failed to download track audio (${response.status})`);
+      }
+
+      const blob = await response.blob();
+      const downloadUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.style.display = 'none';
+      a.href = downloadUrl;
+
+      const guessedExtension =
+        blob.type.includes('wav') ? 'wav'
+        : blob.type.includes('mpeg') ? 'mp3'
+        : blob.type.includes('ogg') ? 'ogg'
+        : 'wav';
+
+      a.download = `track_${track.id}_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.${guessedExtension}`;
+      document.body.appendChild(a);
+      a.click();
+
+      setTimeout(() => {
+        document.body.removeChild(a);
+        URL.revokeObjectURL(downloadUrl);
+      }, 100);
+    } catch (err: any) {
+      console.error("Track audio export failed", err);
+      setGlobalError(err?.message || "Failed to export track audio.");
+    } finally {
+      setExportingTrackId(null);
+    }
   };
 
   const fetchSunoResults = async () => {
