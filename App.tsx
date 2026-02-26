@@ -5,7 +5,7 @@ import { Play, Pause, RefreshCw, Image as  Music, Plus, Trash2, Volume2, VolumeX
 import { AppStatus, SonicTrack, InstrumentType, getInstrumentsForGenre, FilterState } from './types';
 import { composeFromImage } from './services/geminiService';
 import { SonicProfile } from './types';
-import { runTextoToAuidoWithFalAce, FalTextToAudioAceResult } from './services/falService';
+import { runTextoToAuidoWithFalAce, FalTextToAudioAceResult,runTextToAudioWithFal } from './services/falService';
 import { wavAudioEngine } from "./services/wavAudioEngine";
 import AudioVisualizer from './components/AudioVisualizer';
 
@@ -31,6 +31,7 @@ const App: React.FC = () => {
   const [audioDurationSec, setAudioDurationSec] = useState<number>(10);
   const [showAdvancedAudio, setShowAdvancedAudio] = useState(false);
   const [audioGenInstrumental, setAudioGenInstrumental] = useState(true);
+  const [audioGenBackend, setAudioGenBackend] = useState<'ace' | 'standard'>('ace');
   const [audioGenGuidanceScale, setAudioGenGuidanceScale] = useState<number>(15);
   const [audioGenNumberOfSteps, setAudioGenNumberOfSteps] = useState<string>('');
   const [audioGenScheduler, setAudioGenScheduler] = useState<"euler" | "heun">("euler");
@@ -92,6 +93,50 @@ const App: React.FC = () => {
     if (value.trim() === '') return undefined;
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : undefined;
+  };
+
+  const generateAudioWithSelectedFal = async (
+    prompt: string,
+    options?: { instrumental?: boolean; duration?: number }
+  ) => {
+    const instrumental = options?.instrumental ?? audioGenInstrumental;
+    const duration = Math.max(1, Math.min(60, Math.round(options?.duration ?? audioDurationSec)));
+
+    if (audioGenBackend === 'standard') {
+      const steps = parseOptionalAudioParam(audioGenNumberOfSteps);
+      return runTextToAudioWithFal({
+        prompt,
+        guidance_scale: Math.max(0, audioGenGuidanceScale),
+        seconds_total: duration,
+        ...(steps !== undefined ? { num_inference_steps: Math.max(1, Math.round(steps)) } : {}),
+      });
+    }
+
+    const optionalAceParams = {
+      number_of_steps: parseOptionalAudioParam(audioGenNumberOfSteps),
+      granularity_scale: parseOptionalAudioParam(audioGenGranularityScale),
+      guidance_interval: parseOptionalAudioParam(audioGenGuidanceInterval),
+      guidance_interval_decay: parseOptionalAudioParam(audioGenGuidanceIntervalDecay),
+      minimum_guidance_scale: parseOptionalAudioParam(audioGenMinimumGuidanceScale),
+      tag_guidance_scale: parseOptionalAudioParam(audioGenTagGuidanceScale),
+      lyric_guidance_scale: parseOptionalAudioParam(audioGenLyricGuidanceScale),
+    };
+    const falInput: FalTextToAudioAceResult = {
+      prompt,
+      guidance_scale: Math.max(0, audioGenGuidanceScale),
+      instrumental,
+      duration,
+      scheduler: audioGenScheduler,
+      guidance_type: audioGenGuidanceType,
+      ...(optionalAceParams.number_of_steps !== undefined ? { number_of_steps: Math.round(optionalAceParams.number_of_steps) } : {}),
+      ...(optionalAceParams.granularity_scale !== undefined ? { granularity_scale: optionalAceParams.granularity_scale } : {}),
+      ...(optionalAceParams.guidance_interval !== undefined ? { guidance_interval: optionalAceParams.guidance_interval } : {}),
+      ...(optionalAceParams.guidance_interval_decay !== undefined ? { guidance_interval_decay: optionalAceParams.guidance_interval_decay } : {}),
+      ...(optionalAceParams.minimum_guidance_scale !== undefined ? { minimum_guidance_scale: optionalAceParams.minimum_guidance_scale } : {}),
+      ...(optionalAceParams.tag_guidance_scale !== undefined ? { tag_guidance_scale: optionalAceParams.tag_guidance_scale } : {}),
+      ...(optionalAceParams.lyric_guidance_scale !== undefined ? { lyric_guidance_scale: optionalAceParams.lyric_guidance_scale } : {}),
+    };
+    return runTextoToAuidoWithFalAce(falInput);
   };
 
   const exportProject = () => {
@@ -275,41 +320,7 @@ const App: React.FC = () => {
           Texture should be ${result.soundDesign.texture} with ${result.soundDesign.space}. 
           Keep it as a single realistic, mix-ready instrumental layer.`;
 
-      const aduioPrompt3 = `Create a ${result.emotion.label.toLowerCase()} instrumental layer 
-            with energy level ${result.emotion.arousal}/100 
-            and harmonic tension level ${result.musicalParameters.harmonic_tension}/10.
-
-            Use ${result.soundDesign.instrument} with ${result.soundDesign.waveform}.
-            Tempo ${result.musicalParameters.tempo} BPM.
-            Keep rhythmic density at level ${result.musicalParameters.rhythmic_density}/10.
-            Minimalist structure, single layer, production-ready realism.`
-
-      const optionalAceParams = {
-        number_of_steps: parseOptionalAudioParam(audioGenNumberOfSteps),
-        granularity_scale: parseOptionalAudioParam(audioGenGranularityScale),
-        guidance_interval: parseOptionalAudioParam(audioGenGuidanceInterval),
-        guidance_interval_decay: parseOptionalAudioParam(audioGenGuidanceIntervalDecay),
-        minimum_guidance_scale: parseOptionalAudioParam(audioGenMinimumGuidanceScale),
-        tag_guidance_scale: parseOptionalAudioParam(audioGenTagGuidanceScale),
-        lyric_guidance_scale: parseOptionalAudioParam(audioGenLyricGuidanceScale),
-      };
-      const falInput: FalTextToAudioAceResult = {
-        prompt: audioPrompt,
-        guidance_scale: Math.max(0, audioGenGuidanceScale),
-        instrumental: audioGenInstrumental,
-        duration: Math.max(1, Math.min(60, Math.round(audioDurationSec))),
-        scheduler: audioGenScheduler,
-        guidance_type: audioGenGuidanceType,
-        ...(optionalAceParams.number_of_steps !== undefined ? { number_of_steps: Math.round(optionalAceParams.number_of_steps) } : {}),
-        ...(optionalAceParams.granularity_scale !== undefined ? { granularity_scale: optionalAceParams.granularity_scale } : {}),
-        ...(optionalAceParams.guidance_interval !== undefined ? { guidance_interval: optionalAceParams.guidance_interval } : {}),
-        ...(optionalAceParams.guidance_interval_decay !== undefined ? { guidance_interval_decay: optionalAceParams.guidance_interval_decay } : {}),
-        ...(optionalAceParams.minimum_guidance_scale !== undefined ? { minimum_guidance_scale: optionalAceParams.minimum_guidance_scale } : {}),
-        ...(optionalAceParams.tag_guidance_scale !== undefined ? { tag_guidance_scale: optionalAceParams.tag_guidance_scale } : {}),
-        ...(optionalAceParams.lyric_guidance_scale !== undefined ? { lyric_guidance_scale: optionalAceParams.lyric_guidance_scale } : {}),
-      };
-
-      const falResult = await runTextoToAuidoWithFalAce(falInput);
+      const falResult = await generateAudioWithSelectedFal(audioPrompt);
       console.log("Result: ", falResult);
       setTracks(prev => prev.map(t => t.id === id ? { ...t, audioUrl: falResult.audio.url, audioPrompt: audioPrompt } : t));
       setGlobalError(null);
@@ -367,33 +378,7 @@ const App: React.FC = () => {
       setGlobalError(null);
       setTracks(prev => prev.map(t => t.id === trackId ? { ...t, status: AppStatus.ANALYZING } : t));
 
-      const optionalAceParams = {
-        number_of_steps: parseOptionalAudioParam(audioGenNumberOfSteps),
-        granularity_scale: parseOptionalAudioParam(audioGenGranularityScale),
-        guidance_interval: parseOptionalAudioParam(audioGenGuidanceInterval),
-        guidance_interval_decay: parseOptionalAudioParam(audioGenGuidanceIntervalDecay),
-        minimum_guidance_scale: parseOptionalAudioParam(audioGenMinimumGuidanceScale),
-        tag_guidance_scale: parseOptionalAudioParam(audioGenTagGuidanceScale),
-        lyric_guidance_scale: parseOptionalAudioParam(audioGenLyricGuidanceScale),
-      };
-
-      const falInput: FalTextToAudioAceResult = {
-        prompt: nextPrompt,
-        guidance_scale: Math.max(0, audioGenGuidanceScale),
-        instrumental,
-        duration: Math.max(1, Math.min(60, Math.round(duration))),
-        scheduler: audioGenScheduler,
-        guidance_type: audioGenGuidanceType,
-        ...(optionalAceParams.number_of_steps !== undefined ? { number_of_steps: Math.round(optionalAceParams.number_of_steps) } : {}),
-        ...(optionalAceParams.granularity_scale !== undefined ? { granularity_scale: optionalAceParams.granularity_scale } : {}),
-        ...(optionalAceParams.guidance_interval !== undefined ? { guidance_interval: optionalAceParams.guidance_interval } : {}),
-        ...(optionalAceParams.guidance_interval_decay !== undefined ? { guidance_interval_decay: optionalAceParams.guidance_interval_decay } : {}),
-        ...(optionalAceParams.minimum_guidance_scale !== undefined ? { minimum_guidance_scale: optionalAceParams.minimum_guidance_scale } : {}),
-        ...(optionalAceParams.tag_guidance_scale !== undefined ? { tag_guidance_scale: optionalAceParams.tag_guidance_scale } : {}),
-        ...(optionalAceParams.lyric_guidance_scale !== undefined ? { lyric_guidance_scale: optionalAceParams.lyric_guidance_scale } : {}),
-      } as any;
-
-      const falResult = await runTextoToAuidoWithFalAce(falInput);
+      const falResult = await generateAudioWithSelectedFal(nextPrompt, { instrumental, duration });
       const audioUrl = falResult?.audio?.url;
       if (!audioUrl) {
         throw new Error('FAL did not return an audio URL.');
@@ -694,6 +679,31 @@ const App: React.FC = () => {
 
               {showAdvancedAudio && (
                 <div className="rounded-xl border border-white/10 bg-slate-900/50 p-3 grid grid-cols-2 gap-3">
+                  <label className="col-span-2 text-[10px] text-slate-300 space-y-1">
+                    <span className="uppercase tracking-widest">Generator</span>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setAudioGenBackend('ace')}
+                        className={`rounded-lg px-3 py-2 text-xs font-bold border transition-all ${audioGenBackend === 'ace' ? 'bg-pink-600 text-white border-pink-400' : 'bg-slate-800 text-slate-300 border-white/10 hover:bg-slate-700'}`}
+                      >
+                        ACE
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setAudioGenBackend('standard')}
+                        className={`rounded-lg px-3 py-2 text-xs font-bold border transition-all ${audioGenBackend === 'standard' ? 'bg-emerald-600 text-white border-emerald-400' : 'bg-slate-800 text-slate-300 border-white/10 hover:bg-slate-700'}`}
+                      >
+                        Standard
+                      </button>
+                    </div>
+                    <span className="block text-[10px] text-slate-500">
+                      {audioGenBackend === 'ace'
+                        ? 'ACE mode uses scheduler, guidance type and ACE-specific guidance controls.'
+                        : 'Standard mode uses prompt, duration, guidance and optional steps. ACE-only controls are ignored.'}
+                    </span>
+                  </label>
+
                   <label className="col-span-2 flex items-center justify-between text-xs text-slate-200">
                     <span>Instrumental</span>
                     <input
@@ -731,9 +741,10 @@ const App: React.FC = () => {
                   <label className="text-[10px] text-slate-300 space-y-1">
                     <span className="uppercase tracking-widest">Scheduler</span>
                     <select
+                      disabled={audioGenBackend !== 'ace'}
                       value={audioGenScheduler}
                       onChange={(e) => setAudioGenScheduler(e.target.value as "euler" | "heun")}
-                      className="w-full bg-slate-800 text-white rounded px-2 py-1.5 text-xs border border-white/10 outline-none"
+                      className="w-full bg-slate-800 text-white rounded px-2 py-1.5 text-xs border border-white/10 outline-none disabled:opacity-40"
                     >
                       <option value="euler">euler</option>
                       <option value="heun">heun</option>
@@ -743,9 +754,10 @@ const App: React.FC = () => {
                   <label className="text-[10px] text-slate-300 space-y-1">
                     <span className="uppercase tracking-widest">Guidance Type</span>
                     <select
+                      disabled={audioGenBackend !== 'ace'}
                       value={audioGenGuidanceType}
                       onChange={(e) => setAudioGenGuidanceType(e.target.value as "cfg" | "apg" | "cfg_star")}
-                      className="w-full bg-slate-800 text-white rounded px-2 py-1.5 text-xs border border-white/10 outline-none"
+                      className="w-full bg-slate-800 text-white rounded px-2 py-1.5 text-xs border border-white/10 outline-none disabled:opacity-40"
                     >
                       <option value="cfg">cfg</option>
                       <option value="apg">apg</option>
@@ -755,32 +767,32 @@ const App: React.FC = () => {
 
                   <label className="text-[10px] text-slate-300 space-y-1">
                     <span className="uppercase tracking-widest">Granularity</span>
-                    <input type="number" step="0.1" value={audioGenGranularityScale} onChange={(e) => setAudioGenGranularityScale(e.target.value)} placeholder="default" className="w-full bg-slate-800 text-white rounded px-2 py-1.5 text-xs border border-white/10 outline-none" />
+                    <input disabled={audioGenBackend !== 'ace'} type="number" step="0.1" value={audioGenGranularityScale} onChange={(e) => setAudioGenGranularityScale(e.target.value)} placeholder="default" className="w-full bg-slate-800 text-white rounded px-2 py-1.5 text-xs border border-white/10 outline-none disabled:opacity-40" />
                   </label>
 
                   <label className="text-[10px] text-slate-300 space-y-1">
                     <span className="uppercase tracking-widest">Guidance Interval</span>
-                    <input type="number" step="0.01" value={audioGenGuidanceInterval} onChange={(e) => setAudioGenGuidanceInterval(e.target.value)} placeholder="default" className="w-full bg-slate-800 text-white rounded px-2 py-1.5 text-xs border border-white/10 outline-none" />
+                    <input disabled={audioGenBackend !== 'ace'} type="number" step="0.01" value={audioGenGuidanceInterval} onChange={(e) => setAudioGenGuidanceInterval(e.target.value)} placeholder="default" className="w-full bg-slate-800 text-white rounded px-2 py-1.5 text-xs border border-white/10 outline-none disabled:opacity-40" />
                   </label>
 
                   <label className="text-[10px] text-slate-300 space-y-1">
                     <span className="uppercase tracking-widest">Interval Decay</span>
-                    <input type="number" step="0.01" value={audioGenGuidanceIntervalDecay} onChange={(e) => setAudioGenGuidanceIntervalDecay(e.target.value)} placeholder="default" className="w-full bg-slate-800 text-white rounded px-2 py-1.5 text-xs border border-white/10 outline-none" />
+                    <input disabled={audioGenBackend !== 'ace'} type="number" step="0.01" value={audioGenGuidanceIntervalDecay} onChange={(e) => setAudioGenGuidanceIntervalDecay(e.target.value)} placeholder="default" className="w-full bg-slate-800 text-white rounded px-2 py-1.5 text-xs border border-white/10 outline-none disabled:opacity-40" />
                   </label>
 
                   <label className="text-[10px] text-slate-300 space-y-1">
                     <span className="uppercase tracking-widest">Min Guidance</span>
-                    <input type="number" step="0.1" value={audioGenMinimumGuidanceScale} onChange={(e) => setAudioGenMinimumGuidanceScale(e.target.value)} placeholder="default" className="w-full bg-slate-800 text-white rounded px-2 py-1.5 text-xs border border-white/10 outline-none" />
+                    <input disabled={audioGenBackend !== 'ace'} type="number" step="0.1" value={audioGenMinimumGuidanceScale} onChange={(e) => setAudioGenMinimumGuidanceScale(e.target.value)} placeholder="default" className="w-full bg-slate-800 text-white rounded px-2 py-1.5 text-xs border border-white/10 outline-none disabled:opacity-40" />
                   </label>
 
                   <label className="text-[10px] text-slate-300 space-y-1">
                     <span className="uppercase tracking-widest">Tag Guidance</span>
-                    <input type="number" step="0.1" value={audioGenTagGuidanceScale} onChange={(e) => setAudioGenTagGuidanceScale(e.target.value)} placeholder="default" className="w-full bg-slate-800 text-white rounded px-2 py-1.5 text-xs border border-white/10 outline-none" />
+                    <input disabled={audioGenBackend !== 'ace'} type="number" step="0.1" value={audioGenTagGuidanceScale} onChange={(e) => setAudioGenTagGuidanceScale(e.target.value)} placeholder="default" className="w-full bg-slate-800 text-white rounded px-2 py-1.5 text-xs border border-white/10 outline-none disabled:opacity-40" />
                   </label>
 
                   <label className="text-[10px] text-slate-300 space-y-1">
                     <span className="uppercase tracking-widest">Lyric Guidance</span>
-                    <input type="number" step="0.1" value={audioGenLyricGuidanceScale} onChange={(e) => setAudioGenLyricGuidanceScale(e.target.value)} placeholder="default" className="w-full bg-slate-800 text-white rounded px-2 py-1.5 text-xs border border-white/10 outline-none" />
+                    <input disabled={audioGenBackend !== 'ace'} type="number" step="0.1" value={audioGenLyricGuidanceScale} onChange={(e) => setAudioGenLyricGuidanceScale(e.target.value)} placeholder="default" className="w-full bg-slate-800 text-white rounded px-2 py-1.5 text-xs border border-white/10 outline-none disabled:opacity-40" />
                   </label>
                 </div>
               )}

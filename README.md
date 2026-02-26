@@ -23,7 +23,6 @@ View your app in AI Studio: https://ai.studio/apps/drive/19-4OL3bT2JLDVO-ndracUt
 TODO:
 
    botón para cambiar de API.
-   Regerar imagen y añadir conceptos.
    arreglar:
    -  Botón mute
    - Diagrama al inicio está liso
