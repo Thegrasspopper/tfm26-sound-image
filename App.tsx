@@ -1,8 +1,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Play, Pause, RefreshCw, Image as Sparkles, Music, Plus, Trash2, Volume2, VolumeX, Palette, Timer, Headphones, Square, Circle, Wand2, ChevronUp, Loader2, Download, Upload } from 'lucide-react';
+import { Play, Pause, RefreshCw, Image as  Music, Plus, Trash2, Volume2, VolumeX,  Timer, Headphones, Square, Circle, Wand2, ChevronUp, Loader2, Download, Upload } from 'lucide-react';
 // @ts-ignore
-import MIDISoundsModule, { MIDISounds } from './services/deprecated/midisoundsreact';
 import { AppStatus, SonicTrack, InstrumentType, getInstrumentsForGenre, FilterState } from './types';
 import { composeFromImage } from './services/geminiService';
 import { SonicProfile } from './types';
@@ -17,14 +16,16 @@ const App: React.FC = () => {
   const [isRecording, setIsRecording] = useState(false);
   const [isEncoding, setIsEncoding] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
-  const [activeStep, setActiveStep] = useState<number>(-1);
   const [globalError, setGlobalError] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [showSettings, setShowSettings] = useState<string | null>(null);
-  const [sunoLoading, setSunoLoading] = useState(false);
-  const [sunoError, setSunoError] = useState<string | null>(null);
-  const [sunoItems, setSunoItems] = useState<any[] | null>(null);
   const [exportingTrackId, setExportingTrackId] = useState<string | null>(null);
+  const [regenerateDraft, setRegenerateDraft] = useState<null | {
+    trackId: string;
+    prompt: string;
+    instrumental: boolean;
+    duration: number;
+  }>(null);
 
   const [globalBpm, setGlobalBpm] = useState<number>(120);
   const [audioDurationSec, setAudioDurationSec] = useState<number>(10);
@@ -140,7 +141,9 @@ const App: React.FC = () => {
         image: String(t.image || ''),
         profile: t.profile,
         audioUrl: typeof t.audioUrl === 'string' ? t.audioUrl : undefined,
-        audioPrompt: typeof t.audioPrompt === 'string' ? t.audioPrompt : undefined,
+        audioPrompt: typeof t.audioPrompt === 'string'
+          ? t.audioPrompt
+          : (typeof t.audioPrompt2 === 'string' ? t.audioPrompt2 : undefined),
         targetBpm: typeof t.targetBpm === 'number' ? t.targetBpm : undefined,
         pitchSemitones: typeof t.pitchSemitones === 'number' ? t.pitchSemitones : 0,
         selectedInstrument: t.selectedInstrument,
@@ -308,7 +311,7 @@ const App: React.FC = () => {
 
       const falResult = await runTextoToAuidoWithFalAce(falInput);
       console.log("Result: ", falResult);
-      setTracks(prev => prev.map(t => t.id === id ? { ...t, audioUrl: falResult.audio.url, audioPrompt2: audioPrompt } : t));
+      setTracks(prev => prev.map(t => t.id === id ? { ...t, audioUrl: falResult.audio.url, audioPrompt: audioPrompt } : t));
       setGlobalError(null);
       await wavAudioEngine.loadTrackFromUrl(id, falResult.audio.url);
       startPlayback();
@@ -335,8 +338,86 @@ const App: React.FC = () => {
   };
 
   const regenerateTrack = async (id: string) => {
-    // TODO add function to regenerate the picture and allow user to configured some of the setting before sending.
-    console.log("Not in use")
+    const track = tracks.find(t => t.id === id);
+    if (!track) return;
+
+    const currentPrompt =
+      track.audioPrompt ||
+      ((track as any).audioPrompt2 ?? '') ||
+      '';
+    setRegenerateDraft({
+      trackId: id,
+      prompt: currentPrompt,
+      instrumental: audioGenInstrumental,
+      duration: Math.max(1, Math.min(60, Math.round(audioDurationSec))),
+    });
+  };
+
+  const submitRegenerateTrack = async () => {
+    if (!regenerateDraft) return;
+    const { trackId, prompt, instrumental, duration } = regenerateDraft;
+    const nextPrompt = prompt.trim();
+    if (!nextPrompt) {
+      setGlobalError('Prompt cannot be empty.');
+      return;
+    }
+
+    try {
+      setIsProcessing(true);
+      setGlobalError(null);
+      setTracks(prev => prev.map(t => t.id === trackId ? { ...t, status: AppStatus.ANALYZING } : t));
+
+      const optionalAceParams = {
+        number_of_steps: parseOptionalAudioParam(audioGenNumberOfSteps),
+        granularity_scale: parseOptionalAudioParam(audioGenGranularityScale),
+        guidance_interval: parseOptionalAudioParam(audioGenGuidanceInterval),
+        guidance_interval_decay: parseOptionalAudioParam(audioGenGuidanceIntervalDecay),
+        minimum_guidance_scale: parseOptionalAudioParam(audioGenMinimumGuidanceScale),
+        tag_guidance_scale: parseOptionalAudioParam(audioGenTagGuidanceScale),
+        lyric_guidance_scale: parseOptionalAudioParam(audioGenLyricGuidanceScale),
+      };
+
+      const falInput: FalTextToAudioAceResult = {
+        prompt: nextPrompt,
+        guidance_scale: Math.max(0, audioGenGuidanceScale),
+        instrumental,
+        duration: Math.max(1, Math.min(60, Math.round(duration))),
+        scheduler: audioGenScheduler,
+        guidance_type: audioGenGuidanceType,
+        ...(optionalAceParams.number_of_steps !== undefined ? { number_of_steps: Math.round(optionalAceParams.number_of_steps) } : {}),
+        ...(optionalAceParams.granularity_scale !== undefined ? { granularity_scale: optionalAceParams.granularity_scale } : {}),
+        ...(optionalAceParams.guidance_interval !== undefined ? { guidance_interval: optionalAceParams.guidance_interval } : {}),
+        ...(optionalAceParams.guidance_interval_decay !== undefined ? { guidance_interval_decay: optionalAceParams.guidance_interval_decay } : {}),
+        ...(optionalAceParams.minimum_guidance_scale !== undefined ? { minimum_guidance_scale: optionalAceParams.minimum_guidance_scale } : {}),
+        ...(optionalAceParams.tag_guidance_scale !== undefined ? { tag_guidance_scale: optionalAceParams.tag_guidance_scale } : {}),
+        ...(optionalAceParams.lyric_guidance_scale !== undefined ? { lyric_guidance_scale: optionalAceParams.lyric_guidance_scale } : {}),
+      } as any;
+
+      const falResult = await runTextoToAuidoWithFalAce(falInput);
+      const audioUrl = falResult?.audio?.url;
+      if (!audioUrl) {
+        throw new Error('FAL did not return an audio URL.');
+      }
+
+      setTracks(prev => prev.map(t => t.id === trackId ? {
+        ...t,
+        audioUrl,
+        audioPrompt: nextPrompt,
+        status: AppStatus.READY,
+      } : t));
+
+      await wavAudioEngine.loadTrackFromUrl(trackId, audioUrl);
+      setRegenerateDraft(null);
+      if (isPlaying) {
+        await wavAudioEngine.playAll();
+      }
+    } catch (err: any) {
+      console.error('Track regeneration failed', err);
+      setTracks(prev => prev.map(t => t.id === trackId ? { ...t, status: AppStatus.READY } : t));
+      setGlobalError(err?.message || 'Failed to regenerate track.');
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const removeTrack = (id: string) => {
@@ -369,16 +450,8 @@ const App: React.FC = () => {
     setTracks(prev => prev.map(t => t.id === id ? { ...t, pitchSemitones: next } : t));
   };
 
-  const updateFilters = (id: string, key: keyof FilterState, val: number) => {
-    setTracks(prev => prev.map(t => t.id === id ? {
-      ...t,
-      filters: { ...t.filters, [key]: val }
-    } : t));
-  };
-
   const startPlayback = () => {
     if (!wavAudioEngine.hasAnyLoadedBuffer()) return;
-    setActiveStep(-1);
     setIsPlaying(true);
     wavAudioEngine.playAll().catch((err) => {
       console.error("WAV playback failed", err);
@@ -391,7 +464,6 @@ const App: React.FC = () => {
     if (isRecording) handleToggleRecording();
     wavAudioEngine.stopAll();
     setIsPlaying(false);
-    setActiveStep(-1);
   };
 
   const handleToggleRecording = async () => {
@@ -475,26 +547,6 @@ const App: React.FC = () => {
       setGlobalError(err?.message || "Failed to export track audio.");
     } finally {
       setExportingTrackId(null);
-    }
-  };
-
-  const fetchSunoResults = async () => {
-    const taskId = "2fac....";
-    try {
-      setSunoLoading(true);
-      setSunoError(null);
-      const restUrl = getWpAppConfig().restUrl;
-      if (!restUrl) throw new Error('REST URL not configured (window.WP_APP.restUrl)');
-      const res = await fetch(`${restUrl}suno/v1/results?task_id=${encodeURIComponent(taskId)}`);
-      if (!res.ok) throw new Error(`Request failed: ${res.status}`);
-      const json = await res.json();
-      console.log(json.items);
-      setSunoItems(json.items || []);
-    } catch (err: any) {
-      console.error(err);
-      setSunoError(err?.message || 'Failed to fetch Suno results');
-    } finally {
-      setSunoLoading(false);
     }
   };
 
@@ -809,7 +861,7 @@ const App: React.FC = () => {
                         Prompt used for text-to-audio
                       </p>
                       <p className="text-xs leading-relaxed text-slate-200 break-words">
-                        {track.audioPrompt2 || 'No audio prompt saved for this track yet.'}
+                        {track.audioPrompt || 'No audio prompt saved for this track yet.'}
                       </p>
                     </div>
                   </div>
@@ -930,6 +982,90 @@ const App: React.FC = () => {
           )}
         </section>
       </main>
+
+      {regenerateDraft && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm">
+          <div className="w-full max-w-3xl rounded-3xl border border-white/10 bg-slate-900 shadow-2xl p-5 md:p-6">
+            <div className="flex items-center justify-between gap-4 mb-4">
+              <div>
+                <h3 className="text-white font-black tracking-wide uppercase text-sm">Regenerate Track</h3>
+                <p className="text-slate-400 text-xs">Edit the prompt before sending it to FAL.</p>
+              </div>
+              <button
+                onClick={() => !isProcessing && setRegenerateDraft(null)}
+                disabled={isProcessing}
+                className="px-3 py-2 rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700 disabled:opacity-50"
+              >
+                Close
+              </button>
+            </div>
+
+            <label className="block mb-4">
+              <span className="block text-xs font-bold uppercase tracking-[0.14em] text-slate-400 mb-2">Prompt</span>
+              <textarea
+                value={regenerateDraft.prompt}
+                onChange={(e) => setRegenerateDraft(prev => prev ? { ...prev, prompt: e.target.value } : prev)}
+                rows={10}
+                className="w-full resize-y min-h-[220px] rounded-2xl border border-white/10 bg-slate-950 text-slate-100 p-4 text-sm leading-relaxed outline-none focus:border-pink-500"
+                placeholder="Describe the audio you want to generate..."
+              />
+            </label>
+
+            <div className="flex flex-col md:flex-row gap-3 md:items-end mb-5">
+              <label className="flex items-center gap-3 rounded-xl border border-white/10 bg-slate-950 px-4 py-3">
+                <input
+                  type="checkbox"
+                  checked={regenerateDraft.instrumental}
+                  onChange={(e) => setRegenerateDraft(prev => prev ? { ...prev, instrumental: e.target.checked } : prev)}
+                  className="w-4 h-4"
+                />
+                <span className="text-sm text-slate-200">Instrumental only</span>
+              </label>
+
+              <label className="flex flex-col gap-2 rounded-xl border border-white/10 bg-slate-950 px-4 py-3">
+                <span className="text-xs font-bold uppercase tracking-[0.14em] text-slate-400">Duration (sec)</span>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="range"
+                    min="1"
+                    max="60"
+                    step="1"
+                    value={regenerateDraft.duration}
+                    onChange={(e) => setRegenerateDraft(prev => prev ? { ...prev, duration: Math.max(1, Math.min(60, parseInt(e.target.value || '10', 10))) } : prev)}
+                    className="w-48"
+                  />
+                  <input
+                    type="number"
+                    min="1"
+                    max="60"
+                    value={regenerateDraft.duration}
+                    onChange={(e) => setRegenerateDraft(prev => prev ? { ...prev, duration: Math.max(1, Math.min(60, parseInt(e.target.value || '10', 10))) } : prev)}
+                    className="w-20 rounded-lg bg-slate-800 text-white px-2 py-1 outline-none"
+                  />
+                </div>
+              </label>
+            </div>
+
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setRegenerateDraft(null)}
+                disabled={isProcessing}
+                className="px-4 py-2 rounded-xl bg-slate-800 text-slate-200 hover:bg-slate-700 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={submitRegenerateTrack}
+                disabled={isProcessing}
+                className="px-4 py-2 rounded-xl bg-pink-600 text-white hover:bg-pink-500 disabled:opacity-60 flex items-center gap-2"
+              >
+                {isProcessing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
+                Regenerate
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
