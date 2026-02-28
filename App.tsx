@@ -415,8 +415,12 @@ const App: React.FC = () => {
     setTracks(prev => prev.map(t => t.id === id ? { ...t, pitchSemitones: next } : t));
   };
 
-  const unmuteAllTracks = () => {
-    setTracks(prev => prev.map(t => ({ ...t, isMuted: false })));
+  const toggleMuteAllTracks = () => {
+    setTracks((prev) => {
+      if (prev.length === 0) return prev;
+      const areAllMuted = prev.every((t) => t.isMuted);
+      return prev.map((t) => ({ ...t, isMuted: !areAllMuted }));
+    });
   };
 
   const startPlayback = () => {
@@ -520,7 +524,8 @@ const App: React.FC = () => {
   };
 
   const isAnySoloed = tracks.some(t => t.isSoloed);
-  const hasMutedTracks = tracks.some(t => t.isMuted);
+  const hasTracks = tracks.length > 0;
+  const areAllTracksMuted = hasTracks && tracks.every(t => t.isMuted);
   const canPlayWav = wavAudioEngine.hasAnyLoadedBuffer() && !isEncoding;
 
   return (
@@ -599,7 +604,7 @@ const App: React.FC = () => {
                   value={globalBpm}
                   onChange={(e) => setGlobalBpm(parseInt(e.target.value))}
                   onDoubleClick={() => setGlobalBpm(DEFAULT_GLOBAL_BPM)}
-                  className="w-24 h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-pink-500"
+                  className="w-16 bg-slate-800/50 text-white text-[12px] font-bold p-2 rounded-lg outline-none border border-white/10"
                 />
                 <span className="text-2xl font-black text-white w-10 text-center">{globalBpm}</span>
               </div>
@@ -617,7 +622,7 @@ const App: React.FC = () => {
                   value={masterVolume}
                   onChange={(e) => setMasterVolume(parseFloat(e.target.value))}
                   onDoubleClick={() => setMasterVolume(DEFAULT_MASTER_VOLUME)}
-                  className="w-24 h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                  className="w-16 bg-slate-800/50 text-white text-[12px] font-bold p-2 rounded-lg outline-none border border-white/10"
                 />
                 <span className="text-2xl font-black text-white w-10 text-center">{(masterVolume * 100).toFixed(0)}</span>
               </div>
@@ -647,8 +652,6 @@ const App: React.FC = () => {
                 <span className="text-xs font-black tracking-widest uppercase text-slate-400">sec</span>
               </div>
             </div>
-
-            <div className="h-10 w-px bg-slate-800 hidden lg:block" />
 
             <div className="h-10 w-px bg-slate-800 hidden lg:block" />
 
@@ -787,17 +790,17 @@ const App: React.FC = () => {
             </div>
           </div>
 
-          <div className="flex items-center gap-4 w-full lg:w-auto">
+          <div className="flex items-start gap-4 w-full lg:w-auto self-start">
             <button
-              onClick={unmuteAllTracks}
-              disabled={!hasMutedTracks}
-              className={`flex items-center gap-2 py-3 px-4 rounded-2xl font-bold border border-white/10 shadow-lg ${!hasMutedTracks
+              onClick={toggleMuteAllTracks}
+              disabled={!hasTracks}
+              className={`flex py-3 px-4 rounded-2xl font-bold border border-white/10 shadow-lg ${!hasTracks
                   ? 'bg-slate-700 text-slate-300 cursor-not-allowed'
                   : 'bg-teal-700 text-white hover:bg-teal-600'
                 }`}
+              title={areAllTracksMuted ? 'Unmute all tracks' : 'Mute all tracks'}
             >
-              <Volume2 className="w-4 h-4" />
-              <span className="hidden sm:inline">Unmute All</span>
+              {areAllTracksMuted ? <Volume2 className="w-4 h-5" /> : <VolumeX className="w-4 h-" />}
             </button>
 
             <button
