@@ -21,9 +21,17 @@ View your app in AI Studio: https://ai.studio/apps/drive/19-4OL3bT2JLDVO-ndracUt
 
 
 TODO:
-
-   botón para cambiar de API.
-   arreglar:
-   -  Botón mute
+   Cuando regeneras:
+   - Más bien palabras
+      -  miedo
+      -  furia
+   Arreglar:
+   - Botón mute
    - Diagrama al inicio está liso
    - Interfaz
+   Boton mute y play a la vez
+   Barra sonido.
+   Efecto tipo: eco, reverb, 
+   Botón play para cada track
+   Armonizar tracks: Selecionar tu base y use esos BPM para el resto.
+   Export should also download audios, or upload to web.

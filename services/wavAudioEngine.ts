@@ -4,18 +4,23 @@ export class WavAudioPlayer {
   private audioBuffer: AudioBuffer | null = null;
   private sourceNode: AudioBufferSourceNode | null = null;
   private gainNode: GainNode | null = null;
+  private highPassNode: BiquadFilterNode | null = null;
+  private compressorNode: DynamicsCompressorNode | null = null;
+  private reverbSendNode: GainNode | null = null;
 
   private startedAt = 0;
   private playStartOffset = 0;
   private pausedOffset = 0;
   private isPlayingInternal = false;
   private volume = 1;
+  private trimGain = 1;
   private playbackRate = 1;
   private detuneCents = 0;
 
   constructor(
     private readonly getContextFn: () => AudioContext,
-    private readonly getMasterGainFn: () => GainNode
+    private readonly getMixInputFn: () => GainNode,
+    private readonly getReverbInputFn: () => GainNode
   ) {}
 
   public async loadFromUrl(url: string): Promise<AudioBuffer> {
@@ -61,7 +66,7 @@ export class WavAudioPlayer {
     source.loop = true;
     source.playbackRate.value = this.playbackRate;
     source.detune.value = this.detuneCents;
-    source.connect(this.getGainNode());
+    source.connect(this.getHighPassNode());
 
     source.onended = () => {
       if (this.sourceNode !== source) return;
@@ -118,9 +123,7 @@ export class WavAudioPlayer {
 
   public setVolume(volume: number): void {
     this.volume = Math.max(0, Math.min(volume, 2));
-    if (this.gainNode) {
-      this.gainNode.gain.value = this.volume;
-    }
+    this.applyOutputGain();
   }
 
   public setPlaybackRate(rate: number): void {
@@ -201,6 +204,8 @@ export class WavAudioPlayer {
     const ctx = this.getContextFn();
     const decoded = await ctx.decodeAudioData(arrayBuffer.slice(0));
     this.audioBuffer = decoded;
+    this.trimGain = this.estimateTrimGain(decoded);
+    this.applyOutputGain();
     this.pausedOffset = 0;
     return decoded;
   }
@@ -209,10 +214,76 @@ export class WavAudioPlayer {
     if (!this.gainNode) {
       const ctx = this.getContextFn();
       this.gainNode = ctx.createGain();
-      this.gainNode.gain.value = this.volume;
-      this.gainNode.connect(this.getMasterGainFn());
+      this.applyOutputGain();
+      this.gainNode.connect(this.getMixInputFn());
+
+      const send = this.getReverbSendNode();
+      this.gainNode.connect(send);
+      send.connect(this.getReverbInputFn());
     }
     return this.gainNode;
+  }
+
+  private getHighPassNode(): BiquadFilterNode {
+    if (!this.highPassNode) {
+      const ctx = this.getContextFn();
+      this.highPassNode = ctx.createBiquadFilter();
+      this.highPassNode.type = "highpass";
+      this.highPassNode.frequency.value = 32;
+      this.highPassNode.Q.value = 0.707;
+      this.highPassNode.connect(this.getCompressorNode());
+    }
+    return this.highPassNode;
+  }
+
+  private getCompressorNode(): DynamicsCompressorNode {
+    if (!this.compressorNode) {
+      const ctx = this.getContextFn();
+      this.compressorNode = ctx.createDynamicsCompressor();
+      this.compressorNode.threshold.value = -18;
+      this.compressorNode.knee.value = 18;
+      this.compressorNode.ratio.value = 2;
+      this.compressorNode.attack.value = 0.01;
+      this.compressorNode.release.value = 0.2;
+      this.compressorNode.connect(this.getGainNode());
+    }
+    return this.compressorNode;
+  }
+
+  private getReverbSendNode(): GainNode {
+    if (!this.reverbSendNode) {
+      const ctx = this.getContextFn();
+      this.reverbSendNode = ctx.createGain();
+      this.reverbSendNode.gain.value = 0.12;
+    }
+    return this.reverbSendNode;
+  }
+
+  private applyOutputGain(): void {
+    if (!this.gainNode) return;
+    this.gainNode.gain.value = this.volume * this.trimGain;
+  }
+
+  private estimateTrimGain(buffer: AudioBuffer): number {
+    const channels = Math.max(1, buffer.numberOfChannels);
+    const maxSamples = Math.min(buffer.length, 48_000);
+    if (maxSamples === 0) return 1;
+
+    let sumSquares = 0;
+    for (let channel = 0; channel < channels; channel++) {
+      const data = buffer.getChannelData(channel);
+      for (let i = 0; i < maxSamples; i++) {
+        const sample = data[i];
+        sumSquares += sample * sample;
+      }
+    }
+
+    const rms = Math.sqrt(sumSquares / (maxSamples * channels));
+    if (!Number.isFinite(rms) || rms <= 1e-6) return 1;
+
+    const targetRms = 0.12;
+    const raw = targetRms / rms;
+    return Math.max(0.35, Math.min(2.5, raw));
   }
 
   private getEffectivePlaybackRate(): number {
@@ -223,10 +294,16 @@ export class WavAudioPlayer {
 
 export class WavAudioEngine {
   private audioContext: AudioContext | null = null;
+  private mixInputNode: GainNode | null = null;
+  private glueCompressorNode: DynamicsCompressorNode | null = null;
   private masterGainNode: GainNode | null = null;
+  private reverbInputNode: GainNode | null = null;
+  private reverbConvolverNode: ConvolverNode | null = null;
+  private reverbReturnGainNode: GainNode | null = null;
   private defaultPlayer = new WavAudioPlayer(
     () => this.getContext(),
-    () => this.getMasterGainNode()
+    () => this.getMixInputNode(),
+    () => this.getReverbInputNode()
   );
   private players = new Set<WavAudioPlayer>();
   private trackPlayers = new Map<string, WavAudioPlayer>();
@@ -245,7 +322,8 @@ export class WavAudioEngine {
   public createPlayer(): WavAudioPlayer {
     const player = new WavAudioPlayer(
       () => this.getContext(),
-      () => this.getMasterGainNode()
+      () => this.getMixInputNode(),
+      () => this.getReverbInputNode()
     );
     this.players.add(player);
     return player;
@@ -502,7 +580,8 @@ export class WavAudioEngine {
 
     const player = new WavAudioPlayer(
       () => this.getContext(),
-      () => this.getMasterGainNode()
+      () => this.getMixInputNode(),
+      () => this.getReverbInputNode()
     );
     this.trackPlayers.set(trackId, player);
     this.players.add(player);
@@ -518,9 +597,15 @@ export class WavAudioEngine {
       if (!player) return;
       const canPlay = isAnySoloed ? track.isSoloed : !track.isMuted;
       const originalBpm =
-        typeof track.profile?.bpm === "number" && Number.isFinite(track.profile.bpm) && track.profile.bpm > 0
-          ? track.profile.bpm
-          : null;
+        typeof track.sourceBpm === "number" && Number.isFinite(track.sourceBpm) && track.sourceBpm > 0
+          ? track.sourceBpm
+          : (
+            typeof track.profile?.musicalParameters?.tempo === "number" &&
+            Number.isFinite(track.profile.musicalParameters.tempo) &&
+            track.profile.musicalParameters.tempo > 0
+              ? track.profile.musicalParameters.tempo
+              : null
+          );
       const trackTargetBpm =
         typeof track.targetBpm === "number" && Number.isFinite(track.targetBpm) && track.targetBpm > 0
           ? track.targetBpm
@@ -549,15 +634,99 @@ export class WavAudioEngine {
     return this.audioContext;
   }
 
+  private getMixInputNode(): GainNode {
+    this.ensureMixGraph();
+    return this.mixInputNode as GainNode;
+  }
+
+  private getReverbInputNode(): GainNode {
+    this.ensureMixGraph();
+    return this.reverbInputNode as GainNode;
+  }
+
   private getMasterGainNode(): GainNode {
+    this.ensureMixGraph();
+    return this.masterGainNode as GainNode;
+  }
+
+  private ensureMixGraph(): void {
+    if (
+      this.mixInputNode &&
+      this.glueCompressorNode &&
+      this.masterGainNode &&
+      this.reverbInputNode &&
+      this.reverbConvolverNode &&
+      this.reverbReturnGainNode
+    ) {
+      return;
+    }
+
+    const ctx = this.getContext();
+
+    if (!this.mixInputNode) {
+      this.mixInputNode = ctx.createGain();
+      this.mixInputNode.gain.value = 1;
+    }
+
+    if (!this.glueCompressorNode) {
+      this.glueCompressorNode = ctx.createDynamicsCompressor();
+      this.glueCompressorNode.threshold.value = -14;
+      this.glueCompressorNode.knee.value = 20;
+      this.glueCompressorNode.ratio.value = 1.6;
+      this.glueCompressorNode.attack.value = 0.015;
+      this.glueCompressorNode.release.value = 0.22;
+    }
+
     if (!this.masterGainNode) {
-      const ctx = this.getContext();
       this.masterGainNode = ctx.createGain();
       this.masterGainNode.gain.value = this.masterVolume;
       this.masterGainNode.connect(ctx.destination);
       this.masterGainNode.connect(this.getRecordingDestination());
     }
-    return this.masterGainNode;
+
+    if (!this.reverbInputNode) {
+      this.reverbInputNode = ctx.createGain();
+      this.reverbInputNode.gain.value = 1;
+    }
+
+    if (!this.reverbConvolverNode) {
+      this.reverbConvolverNode = ctx.createConvolver();
+      this.reverbConvolverNode.buffer = this.createShortRoomImpulse(ctx);
+    }
+
+    if (!this.reverbReturnGainNode) {
+      this.reverbReturnGainNode = ctx.createGain();
+      this.reverbReturnGainNode.gain.value = 0.14;
+    }
+
+    this.mixInputNode.disconnect();
+    this.glueCompressorNode.disconnect();
+    this.reverbInputNode.disconnect();
+    this.reverbConvolverNode.disconnect();
+    this.reverbReturnGainNode.disconnect();
+
+    this.mixInputNode.connect(this.glueCompressorNode);
+    this.glueCompressorNode.connect(this.masterGainNode);
+
+    this.reverbInputNode.connect(this.reverbConvolverNode);
+    this.reverbConvolverNode.connect(this.reverbReturnGainNode);
+    this.reverbReturnGainNode.connect(this.masterGainNode);
+  }
+
+  private createShortRoomImpulse(ctx: AudioContext): AudioBuffer {
+    const lengthSeconds = 0.55;
+    const length = Math.max(1, Math.floor(ctx.sampleRate * lengthSeconds));
+    const impulse = ctx.createBuffer(2, length, ctx.sampleRate);
+
+    for (let channel = 0; channel < impulse.numberOfChannels; channel++) {
+      const data = impulse.getChannelData(channel);
+      for (let i = 0; i < length; i++) {
+        const decay = Math.pow(1 - i / length, 2.4);
+        data[i] = (Math.random() * 2 - 1) * decay;
+      }
+    }
+
+    return impulse;
   }
 
   private getRecordingDestination(): MediaStreamAudioDestinationNode {

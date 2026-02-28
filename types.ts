@@ -72,6 +72,7 @@ export interface SonicTrack {
   profile: SonicProfile;
   audioUrl?: string;
   audioPrompt?: string;
+  sourceBpm?: number;
   targetBpm?: number;
   pitchSemitones?: number;
   selectedInstrument: InstrumentType;

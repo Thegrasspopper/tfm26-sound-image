@@ -1,15 +1,20 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Play, Pause, RefreshCw, Image as  Music, Plus, Trash2, Volume2, VolumeX,  Timer, Headphones, Square, Circle, Wand2, ChevronUp, Loader2, Download, Upload } from 'lucide-react';
+import { Play, Pause, RefreshCw, Image as  Music, Plus, Trash2, Volume2, VolumeX,  Timer, Headphones, Square, Circle, Wand2, ChevronUp, Loader2, Download, Upload, Music3Icon } from 'lucide-react';
 // @ts-ignore
 import { AppStatus, SonicTrack, InstrumentType, getInstrumentsForGenre, FilterState } from './types';
 import { composeFromImage } from './services/geminiService';
-import { SonicProfile } from './types';
 import { runTextoToAuidoWithFalAce, FalTextToAudioAceResult,runTextToAudioWithFal } from './services/falService';
 import { wavAudioEngine } from "./services/wavAudioEngine";
 import AudioVisualizer from './components/AudioVisualizer';
 
 // Handle potential ESM wrapping of the CJS library
+const DEFAULT_GLOBAL_BPM = 120;
+const DEFAULT_MASTER_VOLUME = 0.8;
+const DEFAULT_AUDIO_DURATION_SEC = 10;
+const DEFAULT_TRACK_VOLUME = 0.8;
+const DEFAULT_TRACK_PITCH = 0;
+
 const App: React.FC = () => {
   const [tracks, setTracks] = useState<SonicTrack[]>([]);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -27,8 +32,8 @@ const App: React.FC = () => {
     duration: number;
   }>(null);
 
-  const [globalBpm, setGlobalBpm] = useState<number>(120);
-  const [audioDurationSec, setAudioDurationSec] = useState<number>(10);
+  const [globalBpm, setGlobalBpm] = useState<number>(DEFAULT_GLOBAL_BPM);
+  const [audioDurationSec, setAudioDurationSec] = useState<number>(DEFAULT_AUDIO_DURATION_SEC);
   const [showAdvancedAudio, setShowAdvancedAudio] = useState(false);
   const [audioGenInstrumental, setAudioGenInstrumental] = useState(true);
   const [audioGenBackend, setAudioGenBackend] = useState<'ace' | 'standard'>('ace');
@@ -43,7 +48,7 @@ const App: React.FC = () => {
   const [audioGenTagGuidanceScale, setAudioGenTagGuidanceScale] = useState<string>('');
   const [audioGenLyricGuidanceScale, setAudioGenLyricGuidanceScale] = useState<string>('');
   const [globalGenre, setGlobalGenre] = useState<string>("Modern Pop");
-  const [masterVolume, setMasterVolume] = useState<number>(0.8);
+  const [masterVolume, setMasterVolume] = useState<number>(DEFAULT_MASTER_VOLUME);
 
   const midiSoundsRef = useRef<any>(null);
   const recordingIntervalRef = useRef<any>(null);
@@ -57,6 +62,10 @@ const App: React.FC = () => {
 
   useEffect(() => {
     wavAudioEngine.setTargetBpm(globalBpm);
+    setTracks(prev => {
+      if (prev.length === 0) return prev;
+      return prev.map((t) => ({ ...t, targetBpm: globalBpm }));
+    });
   }, [globalBpm]);
 
   useEffect(() => {
@@ -189,13 +198,18 @@ const App: React.FC = () => {
         audioPrompt: typeof t.audioPrompt === 'string'
           ? t.audioPrompt
           : (typeof t.audioPrompt2 === 'string' ? t.audioPrompt2 : undefined),
+        sourceBpm: typeof t.sourceBpm === 'number'
+          ? t.sourceBpm
+          : (typeof t.profile?.musicalParameters?.tempo === 'number'
+              ? t.profile.musicalParameters.tempo
+              : (typeof t.targetBpm === 'number' ? t.targetBpm : parsed.globalBpm ?? globalBpm)),
         targetBpm: typeof t.targetBpm === 'number' ? t.targetBpm : undefined,
         pitchSemitones: typeof t.pitchSemitones === 'number' ? t.pitchSemitones : 0,
         selectedInstrument: t.selectedInstrument,
         genre: String(t.genre || parsed.globalGenre || globalGenre),
         isMuted: !!t.isMuted,
         isSoloed: !!t.isSoloed,
-        volume: typeof t.volume === 'number' ? t.volume : 0.8,
+        volume: typeof t.volume === 'number' ? t.volume : DEFAULT_TRACK_VOLUME,
         status: t.status ?? AppStatus.READY,
         filters: t.filters ?? { brightness: 100, contrast: 100, saturation: 100, r: 100, g: 100, b: 100 },
       }));
@@ -223,59 +237,6 @@ const App: React.FC = () => {
     }
   };
 
-  const getWpAppConfig = () => {
-    const windowWpApp = (window as any)?.WP_APP || {};
-    const envWpApp = {
-      restUrl: process.env.WP_APP_REST_URL,
-    };
-
-    // Local .env.local values provide defaults; runtime window.WP_APP can override them.
-    return { ...envWpApp, ...windowWpApp };
-  };
-
-  const uploadSequenceBlobToWp = async (
-    blob: Blob,
-    payload: {
-      trackId: string;
-      profile: SonicProfile;
-      genre: string;
-      instrument: InstrumentType;
-      bpm: number;
-    }
-  ) => {
-    const wpApp = getWpAppConfig();
-    const restUrl = wpApp.restUrl;
-    const endpoint = wpApp.sequenceUploadEndpoint || (restUrl ? `${restUrl}suno/v1/upload-mp3?token=${encodeURIComponent(process.env.UPLOAD_TOKEN)}` : null);
-    if (!endpoint) {
-      throw new Error('WP upload endpoint not configured (window.WP_APP.sequenceUploadEndpoint or window.WP_APP.restUrl).');
-    }
-
-    const fileName = `sequence_${payload.trackId}_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.mp3`;
-    const formData = new FormData();
-    formData.append('file', blob, fileName);
-    formData.append('track_id', payload.trackId);
-    formData.append('genre', payload.genre);
-    formData.append('instrument', payload.instrument);
-    formData.append('bpm', String(payload.bpm));
-    formData.append('profile', JSON.stringify(payload.profile));
-
-    const headers: Record<string, string> = {};
-
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers,
-      body: formData,
-    });
-
-    if (!response.ok) {
-      const errText = await response.text();
-      throw new Error(`WP upload failed (${response.status}): ${errText || 'Unknown error'}`);
-    }
-
-    return response.json();
-  };
-
-
   const readFileAsDataUrl = (file: File): Promise<string> =>
     new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -294,11 +255,12 @@ const App: React.FC = () => {
       image: imageData,
       status: AppStatus.ANALYZING,
       genre: globalGenre,
+      sourceBpm: globalBpm,
       targetBpm: globalBpm,
       pitchSemitones: 0,
       isMuted: false,
       isSoloed: false,
-      volume: 0.8,
+      volume: DEFAULT_TRACK_VOLUME,
       profile: null as any,
       selectedInstrument: 'kick' as InstrumentType,
       filters: { brightness: 100, contrast: 100, saturation: 100, r: 100, g: 100, b: 100 }
@@ -311,6 +273,7 @@ const App: React.FC = () => {
       setTracks(prev => prev.map(t => t.id === id ? {
         ...t,
         profile: result,
+        sourceBpm: result.musicalParameters.tempo,
         targetBpm: t.targetBpm,
         status: AppStatus.READY,
       } : t));
@@ -430,9 +393,30 @@ const App: React.FC = () => {
     setTracks(prev => prev.map(t => t.id === id ? { ...t, targetBpm: next } : t));
   };
 
+  const resetTrackBpmToOwn = (id: string) => {
+    setTracks((prev) =>
+      prev.map((t) => {
+        if (t.id !== id) return t;
+        const ownBpm =
+          (typeof t.sourceBpm === 'number' && Number.isFinite(t.sourceBpm) && t.sourceBpm > 0
+            ? t.sourceBpm
+            : (typeof t.profile?.musicalParameters?.tempo === 'number' &&
+              Number.isFinite(t.profile.musicalParameters.tempo) &&
+              t.profile.musicalParameters.tempo > 0
+              ? t.profile.musicalParameters.tempo
+              : DEFAULT_GLOBAL_BPM));
+        return { ...t, targetBpm: Math.max(40, Math.min(240, Math.round(ownBpm))) };
+      })
+    );
+  };
+
   const changeTrackPitch = (id: string, semitones: number) => {
     const next = Math.max(-12, Math.min(12, Math.round(semitones || 0)));
     setTracks(prev => prev.map(t => t.id === id ? { ...t, pitchSemitones: next } : t));
+  };
+
+  const unmuteAllTracks = () => {
+    setTracks(prev => prev.map(t => ({ ...t, isMuted: false })));
   };
 
   const startPlayback = () => {
@@ -536,6 +520,7 @@ const App: React.FC = () => {
   };
 
   const isAnySoloed = tracks.some(t => t.isSoloed);
+  const hasMutedTracks = tracks.some(t => t.isMuted);
   const canPlayWav = wavAudioEngine.hasAnyLoadedBuffer() && !isEncoding;
 
   return (
@@ -613,6 +598,7 @@ const App: React.FC = () => {
                   type="range" min="60" max="160" step="1"
                   value={globalBpm}
                   onChange={(e) => setGlobalBpm(parseInt(e.target.value))}
+                  onDoubleClick={() => setGlobalBpm(DEFAULT_GLOBAL_BPM)}
                   className="w-24 h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-pink-500"
                 />
                 <span className="text-2xl font-black text-white w-10 text-center">{globalBpm}</span>
@@ -630,6 +616,7 @@ const App: React.FC = () => {
                   type="range" min="0" max="1.5" step="0.01"
                   value={masterVolume}
                   onChange={(e) => setMasterVolume(parseFloat(e.target.value))}
+                  onDoubleClick={() => setMasterVolume(DEFAULT_MASTER_VOLUME)}
                   className="w-24 h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
                 />
                 <span className="text-2xl font-black text-white w-10 text-center">{(masterVolume * 100).toFixed(0)}</span>
@@ -653,6 +640,7 @@ const App: React.FC = () => {
                     const next = parseInt(e.target.value || '1', 10);
                     setAudioDurationSec(Math.max(1, Math.min(60, Number.isFinite(next) ? next : 10)));
                   }}
+                  onDoubleClick={() => setAudioDurationSec(DEFAULT_AUDIO_DURATION_SEC)}
                   className="w-16 bg-slate-800/50 text-white text-[12px] font-bold p-2 rounded-lg outline-none border border-white/10"
                 />
                 <span className="text-sm font-black text-white w-8 text-center tabular-nums">{audioDurationSec}</span>
@@ -801,6 +789,18 @@ const App: React.FC = () => {
 
           <div className="flex items-center gap-4 w-full lg:w-auto">
             <button
+              onClick={unmuteAllTracks}
+              disabled={!hasMutedTracks}
+              className={`flex items-center gap-2 py-3 px-4 rounded-2xl font-bold border border-white/10 shadow-lg ${!hasMutedTracks
+                  ? 'bg-slate-700 text-slate-300 cursor-not-allowed'
+                  : 'bg-teal-700 text-white hover:bg-teal-600'
+                }`}
+            >
+              <Volume2 className="w-4 h-4" />
+              <span className="hidden sm:inline">Unmute All</span>
+            </button>
+
+            <button
               onClick={exportProject}
               disabled={tracks.length === 0}
               className={`flex items-center gap-2 py-3 px-4 rounded-2xl font-bold border border-white/10 shadow-lg ${tracks.length === 0
@@ -831,7 +831,7 @@ const App: React.FC = () => {
 
         <section className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
           {tracks.map((track) => {
-            const currentInstruments = getInstrumentsForGenre(track.genre);
+            const effectiveTrackBpm = Math.round(track.targetBpm ?? globalBpm);
             return (
               <div
                 key={track.id}
@@ -922,40 +922,29 @@ const App: React.FC = () => {
                       >
                         {track.isMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
                       </button>
+                      <button
+                        onClick={() => resetTrackBpmToOwn(track.id)}
+                        className="p-2 rounded-lg transition-all bg-slate-800 text-slate-400 hover:text-white"
+                        title="Reset this track BPM to its own original BPM"
+                      >
+                        <Timer className="w-3.5 h-3.5" />
+                      </button>
                     </div>
                     <label className="flex items-center gap-2 text-[10px] normal-case tracking-normal">
-                      <span className="text-slate-400">BPM</span>
-                      <input
-                        type="range"
-                        min="40"
-                        max="240"
-                        step="1"
-                        value={track.targetBpm ?? track.profile?.bpm ?? globalBpm}
-                        onChange={(e) => changeTrackBpm(track.id, parseInt(e.target.value || '0', 10))}
-                        className="w-16 bg-slate-800 text-white rounded px-1 py-1 text-[15px] font-bold outline-none"
-                      />
-                      <span className="text-white text-xs font-bold w-8 text-center tabular-nums">
-                        {Math.round(track.targetBpm ?? track.profile?.bpm ?? globalBpm)}
-                      </span>
-                    </label>
-                  </div>
-                  <div>
-
-                    <label className="flex items-center gap-2 text-[10px] normal-case tracking-normal">
-                      <Timer className="w-3 h-3 text-slate-80" />
                       <input
                         type="range" min="0" max="2.0" step="0.01"
                         value={track.volume}
                         onChange={(e) => updateTrackVolume(track.id, parseFloat(e.target.value))}
+                        onDoubleClick={() => updateTrackVolume(track.id, DEFAULT_TRACK_VOLUME)}
                         className="w-16 bg-slate-800 text-white rounded px-2 py-1 text-[15px] font-bold outline-none"
                       />
                       <span className="text-white text-xs font-bold w-8 text-center tabular-nums">
                         {(track.volume * 100).toFixed(0)}
                       </span>
                     </label>
-
+                    
                     <label className="flex items-center gap-2 text-[10px] normal-case tracking-normal">
-                      <Music className="w-3 h-3 text-slate-200" />
+                      <Music3Icon className="w-3 h-3 text-slate-200" />
                       <input
                         type="range"
                         min="-12"
@@ -963,20 +952,25 @@ const App: React.FC = () => {
                         step="1"
                         value={track.pitchSemitones ?? 0}
                         onChange={(e) => changeTrackPitch(track.id, parseInt(e.target.value || '0', 10))}
+                        onDoubleClick={() => changeTrackPitch(track.id, DEFAULT_TRACK_PITCH)}
                         className="w-16 bg-slate-800 text-white rounded px-2 py-1 text-[15px] font-bold outline-none"
                       />
                       <span className="text-white text-xs font-bold w-10 text-center tabular-nums">
                         {(track.pitchSemitones ?? 0) > 0 ? `+${track.pitchSemitones}` : (track.pitchSemitones ?? 0)}
                       </span>
-                    </label>
+                        </label>
+                        
                   </div>
-
                   <AudioVisualizer
                     isPlaying={wavAudioEngine.isTrackPlaying(track.id)}
                     audioBuffer={wavAudioEngine.getTrackAudioBuffer(track.id)}
                     audioContext={wavAudioEngine.getAudioContextIfAvailable()}
                     getCurrentTime={() => wavAudioEngine.getTrackCurrentTime(track.id)}
                   />
+                    <div className="mt-2 flex items-center justify-end text-[10px] font-black tracking-widest uppercase text-slate-400">
+                    <Timer className="w-3 h-3 mr-1 text-pink-400" />
+                    {effectiveTrackBpm} BPM
+                  </div>
                 </div>
               </div>
             );
@@ -1044,6 +1038,7 @@ const App: React.FC = () => {
                     step="1"
                     value={regenerateDraft.duration}
                     onChange={(e) => setRegenerateDraft(prev => prev ? { ...prev, duration: Math.max(1, Math.min(60, parseInt(e.target.value || '10', 10))) } : prev)}
+                    onDoubleClick={() => setRegenerateDraft(prev => prev ? { ...prev, duration: DEFAULT_AUDIO_DURATION_SEC } : prev)}
                     className="w-48"
                   />
                   <input
