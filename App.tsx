@@ -317,9 +317,9 @@ const App: React.FC = () => {
       }
       setGlobalError(null);
     } catch (err: any) {
-      console.error("Track WAV import failed", err);
+      console.error("Track audio import failed", err);
       setTracks((prev) => prev.map((t) => t.id === trackId ? { ...t, status: AppStatus.READY } : t));
-      setGlobalError(err?.message || "Failed to import WAV into track.");
+      setGlobalError(err?.message || "Failed to import audio into track.");
     }
   };
 
@@ -1059,7 +1059,7 @@ const App: React.FC = () => {
             <input
               ref={trackAudioImportInputRef}
               type="file"
-              accept=".wav,audio/wav,audio/x-wav,audio/wave"
+              accept=".wav,.vaw,audio/wav,audio/x-wav,audio/wave,audio/vaw"
               className="hidden"
               onChange={handleTrackAudioImport}
             />
@@ -1125,20 +1125,25 @@ const App: React.FC = () => {
                   </div>
 
                   <div className="absolute inset-0 bg-gradient-to-t from-slate-900/90 via-transparent to-transparent pointer-events-none" />
-
-                  <div className="absolute top-4 right-4 flex flex-col gap-2 z-10 p-1">
+                    <div className="absolute top-2 flex flex-col gap-2 z-10 p-1">
+                          <div className="mt-2 flex items-center justify-end text-[10px] font-black tracking-widest uppercase text-slate-400">
+                                        <Timer className="w-3 h-3 mr-1 text-pink-400" />
+                                        {effectiveTrackBpm} BPM
+                                      </div>
+                    </div>
+                  <div className="absolute top-2 right-2 flex flex-col gap-2 z-10 p-1">
                     <button
                       onClick={() => openTrackAudioImport(track.id)}
                       disabled={track.status === AppStatus.ANALYZING}
-                      className="p-2 bg-cyan-600/90 hover:bg-cyan-500 text-white rounded-lg shadow-lg backdrop-blur-sm transition-all disabled:opacity-50"
-                      title="Upload WAV to this track"
+                      className="w-8  p-2 bg-cyan-600/90 hover:bg-cyan-500 text-white rounded-lg shadow-lg backdrop-blur-sm transition-all disabled:opacity-50"
+                      title="Upload WAV/VAW to this track"
                     >
                       <Upload className="w-4 h-4" />
                     </button>
                     <button
                       onClick={() => exportTrackSequenceAsMp3(track)}
                       disabled={exportingTrackId === track.id || track.status !== AppStatus.READY}
-                      className={`p-2 rounded-lg shadow-lg backdrop-blur-sm transition-all ${exportingTrackId === track.id
+                      className={`w-8 p-2 rounded-lg shadow-lg backdrop-blur-sm transition-all ${exportingTrackId === track.id
                           ? 'bg-slate-700 text-slate-300 cursor-wait'
                           : 'bg-emerald-600/90 hover:bg-emerald-500 text-white'
                         }`}
@@ -1147,21 +1152,18 @@ const App: React.FC = () => {
                     </button>
                     <button
                       onClick={() => regenerateTrack(track.id)}
-                      className="p-2 bg-pink-600/90 hover:bg-pink-500 text-white rounded-lg shadow-lg backdrop-blur-sm transition-all"
+                      className="w-8  p-2 bg-pink-600/90 hover:bg-pink-500 text-white rounded-lg shadow-lg backdrop-blur-sm transition-all"
                     >
                       <Wand2 className="w-4 h-4" />
                     </button>
                     <button
                       onClick={() => removeTrack(track.id)}
-                      className="p-2 bg-slate-800/80 text-slate-400 hover:text-red-400 rounded-lg backdrop-blur-sm transition-all"
+                      className="w-8  p-2 bg-slate-800/80 text-slate-400 hover:text-red-400 rounded-lg backdrop-blur-sm transition-all"
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
                     
-                    <div className="mt-2 flex items-center justify-end text-[10px] font-black tracking-widest uppercase text-slate-400">
-                    <Timer className="w-3 h-3 mr-1 text-pink-400" />
-                    {effectiveTrackBpm} BPM
-                  </div>
+               
                   </div>
                 </div>
 

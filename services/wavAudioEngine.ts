@@ -39,12 +39,14 @@ export class WavAudioPlayer {
   public async loadFromFile(file: File): Promise<AudioBuffer> {
     const isWav =
       file.name.toLowerCase().endsWith(".wav") ||
+      file.name.toLowerCase().endsWith(".vaw") ||
       file.type === "audio/wav" ||
       file.type === "audio/x-wav" ||
-      file.type === "audio/wave";
+      file.type === "audio/wave" ||
+      file.type === "audio/vaw";
 
     if (!isWav) {
-      throw new Error("Only WAV files are supported.");
+      throw new Error("Only WAV/VAW files are supported.");
     }
     return this.decode(await file.arrayBuffer());
   }
