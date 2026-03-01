@@ -113,6 +113,14 @@ const App: React.FC = () => {
     return Number.isFinite(parsed) ? parsed : undefined;
   };
 
+  const blobToDataUrl = (blob: Blob): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(new Error('Failed to encode audio blob.'));
+      reader.readAsDataURL(blob);
+    });
+
   const generateAudioWithSelectedFal = async (
     prompt: string,
     options?: { instrumental?: boolean; duration?: number }
@@ -157,27 +165,53 @@ const App: React.FC = () => {
     return runTextoToAuidoWithFalAce(falInput);
   };
 
-  const exportProject = () => {
-    const payload = {
-      version: 1,
-      exportedAt: new Date().toISOString(),
-      globalBpm,
-      globalGenre,
-      masterVolume,
-      tracks,
-    };
+  const exportProject = async () => {
+    try {
+      setIsProcessing(true);
+      setGlobalError(null);
 
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `sonic-palette-project-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.json`;
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => {
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    }, 100);
+      const exportedTracks = await Promise.all(
+        tracks.map(async (track) => {
+          if (!track.audioUrl) return track;
+
+          try {
+            const res = await fetch(track.audioUrl);
+            if (!res.ok) return track;
+            const audioBlob = await res.blob();
+            const dataUrl = await blobToDataUrl(audioBlob);
+            return { ...track, audioUrl: dataUrl };
+          } catch {
+            return track;
+          }
+        })
+      );
+
+      const payload = {
+        version: 2,
+        exportedAt: new Date().toISOString(),
+        globalBpm,
+        globalGenre,
+        masterVolume,
+        tracks: exportedTracks,
+      };
+
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `sonic-palette-project-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.json`;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => {
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }, 100);
+    } catch (err: any) {
+      console.error('Project export failed', err);
+      setGlobalError(err?.message || 'Failed to export project.');
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const restoreTrackAudio = async (nextTracks: SonicTrack[]) => {
