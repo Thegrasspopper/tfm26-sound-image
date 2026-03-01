@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Play, Pause, RefreshCw, Image as  Music, Plus, Trash2, Volume2, VolumeX,  Timer, Headphones, Square, Circle, Wand2, ChevronUp, Loader2, Download, Upload, Music3Icon } from 'lucide-react';
+import { Play, Pause, RefreshCw, Image as  Music, Plus, Trash2, Volume2, VolumeX,  Timer, Headphones, Square, Circle, Wand2, ChevronUp, Loader2, Download, Upload, Music3Icon, Sun, Moon } from 'lucide-react';
 // @ts-ignore
 import { AppStatus, SonicTrack, InstrumentType, getInstrumentsForGenre, FilterState } from './types';
 import { composeFromImage } from './services/geminiService';
@@ -22,6 +22,12 @@ const TRACK_SLIDER_INPUT_CLASS = "w-12 -rotate-90 bg-slate-800 text-white rounde
 const TRACK_SLIDER_VALUE_CLASS = "text-white text-[10px] font-bold tabular-nums";
 
 const App: React.FC = () => {
+  const [uiTheme, setUiTheme] = useState<'dark' | 'light'>(() => {
+    if (typeof window === 'undefined') return 'dark';
+    const savedTheme = window.localStorage.getItem('ui-theme');
+    if (savedTheme === 'light' || savedTheme === 'dark') return savedTheme;
+    return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+  });
   const [tracks, setTracks] = useState<SonicTrack[]>([]);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
@@ -84,6 +90,11 @@ const App: React.FC = () => {
   useEffect(() => {
     wavAudioEngine.updateTracks(tracks);
   }, [tracks]);
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', uiTheme);
+    window.localStorage.setItem('ui-theme', uiTheme);
+  }, [uiTheme]);
 
   useEffect(() => {
     if (isRecording) {
@@ -759,14 +770,24 @@ const App: React.FC = () => {
 
       <header className="w-full text-center mb-8 z-10">
         <div className="flex items-center justify-center gap-4 mb-2">
-          <div className="bg-pink-600 p-3 rounded-2xl shadow-xl shadow-pink-500/20">
+          <div className="theme-brand-chip p-3 rounded-2xl shadow-xl">
             <Music className="w-8 h-8 text-white" />
           </div>
-          <h1 className="text-4xl md:text-5xl font-black tracking-tighter bg-clip-text text-transparent bg-gradient-to-r from-pink-400 via-purple-400 to-indigo-400 uppercase">
+          <h1 className="brand-title text-4xl md:text-5xl font-black tracking-tighter bg-clip-text text-transparent uppercase">
             SonicPalette <span className="text-xs font-mono align-top text-slate-500 ml-2">PRO STUDIO</span>
           </h1>
         </div>
         <p className="text-slate-400 font-medium tracking-widest uppercase text-[10px]">Neural Composition • Techno • Pop • R&B • Reggae</p>
+        <div className="mt-4 flex justify-center">
+          <button
+            onClick={() => setUiTheme((prev) => prev === 'dark' ? 'light' : 'dark')}
+            className="theme-toggle-btn px-4 py-2 rounded-xl font-bold text-xs uppercase tracking-widest inline-flex items-center gap-2"
+            title={`Switch to ${uiTheme === 'dark' ? 'light' : 'dark'} mode`}
+          >
+            {uiTheme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+            {uiTheme === 'dark' ? 'Light UI' : 'Dark UI'}
+          </button>
+        </div>
       </header>
 
       <main className="w-full flex flex-col gap-6 z-10">
@@ -1024,17 +1045,7 @@ const App: React.FC = () => {
               {areAllTracksMuted ? <Volume2 className="w-4 h-5" /> : <VolumeX className="w-4 h-" />}
             </button>
 
-            <button
-              onClick={exportProject}
-              disabled={tracks.length === 0}
-              className={`flex items-center gap-2 py-3 px-4 rounded-2xl font-bold border border-white/10 shadow-lg ${tracks.length === 0
-                  ? 'bg-slate-700 text-slate-300 cursor-not-allowed'
-                  : 'bg-emerald-700 text-white hover:bg-emerald-600'
-                }`}
-            >
-              <Download className="w-4 h-4" />
-              <span className="hidden sm:inline">Export</span>
-            </button>
+
 
             <button
               onClick={() => void bounceMixToNewTrack()}
@@ -1046,7 +1057,19 @@ const App: React.FC = () => {
               title="Record current mix into a new track"
             >
               {isBouncingTrack ? <Loader2 className="w-4 h-4 animate-spin" /> : <Circle className="w-4 h-4" />}
-              <span className="hidden sm:inline">{isBouncingTrack ? 'Bouncing...' : 'Bounce Track'}</span>
+              <span className="hidden sm:inline">{isBouncingTrack ? 'Recording' : 'Record'}</span>
+            </button>
+
+            <button
+              onClick={exportProject}
+              disabled={tracks.length === 0}
+              className={`flex items-center gap-2 py-3 px-4 rounded-2xl font-bold border border-white/10 shadow-lg ${tracks.length === 0
+                  ? 'bg-slate-700 text-slate-300 cursor-not-allowed'
+                  : 'bg-emerald-700 text-white hover:bg-emerald-600'
+                }`}
+            >
+              <Download className="w-4 h-4" />
+              <span className="hidden sm:inline">Export</span>
             </button>
 
             <input

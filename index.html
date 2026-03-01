@@ -10,20 +10,98 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/lamejs@1.2.1/lame.min.js"></script>
     <style>
-        body {
-            font-family: 'Inter', sans-serif;
-            background-color: #0f172a;
-            color: #f8fafc;
+        /* Theme Tokens: edit colors here */
+        :root {
+            --font-family: 'Inter', sans-serif;
+            --color-bg: #0f172a;
+            --color-text: #f8fafc;
+            --color-panel: rgba(30, 41, 59, 0.7);
+            --color-panel-strong: rgba(15, 23, 42, 0.9);
+            --color-border: rgba(255, 255, 255, 0.1);
+            --color-accent: #ec4899;
+            --color-accent-2: #818cf8;
+            --color-slider-thumb: #6366f1;
+            --title-gradient: linear-gradient(90deg, #f472b6 0%, #a78bfa 50%, #818cf8 100%);
+            --theme-btn-bg: rgba(30, 41, 59, 0.85);
+            --theme-btn-border: rgba(255, 255, 255, 0.16);
+            --theme-btn-text: #e2e8f0;
+            --viz-bg: rgba(15, 23, 42, 0.65);
+            --viz-progress: #34d399;
+            --viz-base: #94a3b8;
+            --viz-playhead: #ffffff;
+
+            /* Semantic slate scale for light overrides */
+            --slate-950: #020617;
+            --slate-900: #0f172a;
+            --slate-800: #1e293b;
+            --slate-700: #334155;
+            --slate-600: #475569;
+            --slate-500: #64748b;
+            --slate-400: #94a3b8;
+            --slate-300: #cbd5e1;
+            --slate-200: #e2e8f0;
+            --slate-100: #f1f5f9;
         }
+
+        :root[data-theme="light"] {
+            --color-bg: #d7d7d8;
+            --color-text: #0f172a;
+            --color-panel: rgba(228, 227, 227, 0.9);
+            --color-panel-strong: rgba(207, 208, 209, 0.96);
+            --color-border: rgba(15, 23, 42, 0.12);
+            --color-accent: #db2777;
+            --color-accent-2: #4f46e5;
+            --color-slider-thumb: #4f46e5;
+            --title-gradient: linear-gradient(90deg, #be185d 0%, #7c3aed 50%, #4338ca 100%);
+            --theme-btn-bg: rgba(199, 199, 199, 0.9);
+            --theme-btn-border: rgba(15, 23, 42, 0.15);
+            --theme-btn-text: #1e293b;
+            --viz-bg: rgba(0, 0, 0, 0.7);
+            --viz-progress: #10b981;
+            --viz-base: #64748b;
+            --viz-playhead: #030918;
+
+            --slate-950: #f8fafc;
+            --slate-900: #f1f5f9;
+            --slate-800: #e2e8f0;
+            --slate-700: #cbd5e1;
+            --slate-600: #94a3b8;
+            --slate-500: #64748b;
+            --slate-400: #475569;
+            --slate-300: #334155;
+            --slate-200: #1e293b;
+            --slate-100: #0f172a;
+        }
+
+        body {
+            font-family: var(--font-family);
+            background-color: var(--color-bg);
+            color: var(--color-text);
+            transition: background-color .25s ease, color .25s ease;
+        }
+
+        .brand-title { background-image: var(--title-gradient); }
+        .theme-brand-chip { background: var(--color-accent); box-shadow: 0 20px 32px color-mix(in srgb, var(--color-accent) 30%, transparent); }
+        .theme-toggle-btn {
+            background: var(--theme-btn-bg);
+            color: var(--theme-btn-text);
+            border: 1px solid var(--theme-btn-border);
+            transition: background-color .2s ease, border-color .2s ease, color .2s ease;
+        }
+        .theme-toggle-btn:hover {
+            border-color: color-mix(in srgb, var(--color-accent) 40%, var(--theme-btn-border));
+        }
+
         .glass {
-            background: rgba(30, 41, 59, 0.7);
+            background: var(--color-panel);
             backdrop-filter: blur(12px);
-            border: 1px solid rgba(255, 255, 255, 0.1);
+            border: 1px solid var(--color-border);
         }
         .glass-dark {
-            background: rgba(15, 23, 42, 0.9);
+            background: var(--color-panel-strong);
             backdrop-filter: blur(20px);
         }
+
         .shimmer {
             background: linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.05) 50%, rgba(255,255,255,0) 100%);
             background-size: 200% 100%;
@@ -39,10 +117,35 @@
             height: 12px;
             width: 12px;
             border-radius: 50%;
-            background: #6366f1;
+            background: var(--color-slider-thumb);
             cursor: pointer;
             margin-top: -4px;
         }
+
+        /* Light mode remap for most-used slate utility classes in this app */
+        :root[data-theme="light"] .bg-slate-950 { background-color: var(--slate-950) !important; }
+        :root[data-theme="light"] .bg-slate-900 { background-color: var(--slate-900) !important; }
+        :root[data-theme="light"] .bg-slate-800 { background-color: var(--slate-800) !important; }
+        :root[data-theme="light"] .bg-slate-700 { background-color: var(--slate-700) !important; }
+        :root[data-theme="light"] .bg-slate-900\\/50 { background-color: color-mix(in srgb, var(--slate-900) 50%, transparent) !important; }
+        :root[data-theme="light"] .bg-slate-900\\/40 { background-color: color-mix(in srgb, var(--slate-900) 40%, transparent) !important; }
+        :root[data-theme="light"] .bg-slate-900\\/80 { background-color: color-mix(in srgb, var(--slate-900) 80%, transparent) !important; }
+        :root[data-theme="light"] .bg-slate-950\\/70 { background-color: color-mix(in srgb, var(--slate-950) 70%, transparent) !important; }
+        :root[data-theme="light"] .bg-slate-800\\/80 { background-color: color-mix(in srgb, var(--slate-800) 80%, transparent) !important; }
+        :root[data-theme="light"] .bg-slate-800\\/50 { background-color: color-mix(in srgb, var(--slate-800) 50%, transparent) !important; }
+
+        :root[data-theme="light"] .text-slate-100 { color: var(--slate-100) !important; }
+        :root[data-theme="light"] .text-slate-200 { color: var(--slate-200) !important; }
+        :root[data-theme="light"] .text-slate-300 { color: var(--slate-300) !important; }
+        :root[data-theme="light"] .text-slate-400 { color: var(--slate-400) !important; }
+        :root[data-theme="light"] .text-slate-500 { color: var(--slate-500) !important; }
+        :root[data-theme="light"] .text-slate-600 { color: var(--slate-600) !important; }
+        :root[data-theme="light"] .text-slate-900 { color: var(--slate-900) !important; }
+        :root[data-theme="light"] .text-slate-950 { color: var(--slate-950) !important; }
+        :root[data-theme="light"] .hover\\:text-white:hover { color: var(--slate-100) !important; }
+
+        :root[data-theme="light"] .border-slate-700 { border-color: var(--slate-700) !important; }
+        :root[data-theme="light"] .border-slate-700\\/30 { border-color: color-mix(in srgb, var(--slate-700) 30%, transparent) !important; }
     </style>
 <script type="importmap">
 {
