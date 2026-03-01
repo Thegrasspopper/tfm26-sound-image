@@ -5,6 +5,8 @@ export class WavAudioPlayer {
   private sourceNode: AudioBufferSourceNode | null = null;
   private gainNode: GainNode | null = null;
   private highPassNode: BiquadFilterNode | null = null;
+  private lowShelfNode: BiquadFilterNode | null = null;
+  private highShelfNode: BiquadFilterNode | null = null;
   private compressorNode: DynamicsCompressorNode | null = null;
   private reverbSendNode: GainNode | null = null;
 
@@ -16,6 +18,8 @@ export class WavAudioPlayer {
   private trimGain = 1;
   private playbackRate = 1;
   private detuneCents = 0;
+  private lowEqGainDb = 0;
+  private highEqGainDb = 0;
 
   constructor(
     private readonly getContextFn: () => AudioContext,
@@ -166,6 +170,22 @@ export class WavAudioPlayer {
     }
   }
 
+  public setLowEqGainDb(gainDb: number): void {
+    const next = Number.isFinite(gainDb) ? Math.max(-18, Math.min(18, gainDb)) : 0;
+    this.lowEqGainDb = next;
+    if (this.lowShelfNode) {
+      this.lowShelfNode.gain.value = this.lowEqGainDb;
+    }
+  }
+
+  public setHighEqGainDb(gainDb: number): void {
+    const next = Number.isFinite(gainDb) ? Math.max(-18, Math.min(18, gainDb)) : 0;
+    this.highEqGainDb = next;
+    if (this.highShelfNode) {
+      this.highShelfNode.gain.value = this.highEqGainDb;
+    }
+  }
+
   public getCurrentTime(): number {
     if (!this.audioBuffer) return 0;
     const ctx = this.getContextFn();
@@ -231,9 +251,33 @@ export class WavAudioPlayer {
       this.highPassNode.type = "highpass";
       this.highPassNode.frequency.value = 32;
       this.highPassNode.Q.value = 0.707;
-      this.highPassNode.connect(this.getCompressorNode());
+      this.highPassNode.connect(this.getLowShelfNode());
     }
     return this.highPassNode;
+  }
+
+  private getLowShelfNode(): BiquadFilterNode {
+    if (!this.lowShelfNode) {
+      const ctx = this.getContextFn();
+      this.lowShelfNode = ctx.createBiquadFilter();
+      this.lowShelfNode.type = "lowshelf";
+      this.lowShelfNode.frequency.value = 180;
+      this.lowShelfNode.gain.value = this.lowEqGainDb;
+      this.lowShelfNode.connect(this.getHighShelfNode());
+    }
+    return this.lowShelfNode;
+  }
+
+  private getHighShelfNode(): BiquadFilterNode {
+    if (!this.highShelfNode) {
+      const ctx = this.getContextFn();
+      this.highShelfNode = ctx.createBiquadFilter();
+      this.highShelfNode.type = "highshelf";
+      this.highShelfNode.frequency.value = 4800;
+      this.highShelfNode.gain.value = this.highEqGainDb;
+      this.highShelfNode.connect(this.getCompressorNode());
+    }
+    return this.highShelfNode;
   }
 
   private getCompressorNode(): DynamicsCompressorNode {
@@ -297,6 +341,7 @@ export class WavAudioEngine {
   private mixInputNode: GainNode | null = null;
   private glueCompressorNode: DynamicsCompressorNode | null = null;
   private masterGainNode: GainNode | null = null;
+  private masterAnalyserNode: AnalyserNode | null = null;
   private reverbInputNode: GainNode | null = null;
   private reverbConvolverNode: ConvolverNode | null = null;
   private reverbReturnGainNode: GainNode | null = null;
@@ -352,6 +397,36 @@ export class WavAudioEngine {
 
     const playable = trackPlayable.length > 0 ? trackPlayable : fallbackPlayable;
     await Promise.all(playable.map((player) => player.play()));
+  }
+
+  public async playTrack(trackId: string): Promise<void> {
+    this.applyTrackMixState();
+    const player = this.trackPlayers.get(trackId);
+    if (!player || !player.hasLoadedBuffer()) return;
+    await player.play();
+  }
+
+  public pauseTrack(trackId: string): void {
+    const player = this.trackPlayers.get(trackId);
+    if (!player) return;
+    player.pause();
+  }
+
+  public async toggleTrackPlayback(trackId: string): Promise<boolean> {
+    const player = this.trackPlayers.get(trackId);
+    if (!player || !player.hasLoadedBuffer()) return false;
+
+    if (player.isPlaying()) {
+      player.pause();
+      return false;
+    }
+
+    await this.playTrack(trackId);
+    return true;
+  }
+
+  public isAnyPlayerPlaying(): boolean {
+    return Array.from(this.players).some((player) => player.isPlaying());
   }
 
   public hasAnyLoadedBuffer(): boolean {
@@ -413,6 +488,18 @@ export class WavAudioEngine {
       typeof bpm === "number" && Number.isFinite(bpm) && bpm > 0 ? bpm : null;
     this.targetBpm = normalized;
     this.applyTrackMixState();
+  }
+
+  public setTrackLowEqGainDb(trackId: string, gainDb: number): void {
+    const player = this.trackPlayers.get(trackId);
+    if (!player) return;
+    player.setLowEqGainDb(gainDb);
+  }
+
+  public setTrackHighEqGainDb(trackId: string, gainDb: number): void {
+    const player = this.trackPlayers.get(trackId);
+    if (!player) return;
+    player.setHighEqGainDb(gainDb);
   }
 
   public isRecording(): boolean {
@@ -574,6 +661,11 @@ export class WavAudioEngine {
     return this.audioContext;
   }
 
+  public getMasterAnalyserNode(): AnalyserNode | null {
+    this.ensureMixGraph();
+    return this.masterAnalyserNode;
+  }
+
   private getOrCreateTrackPlayer(trackId: string): WavAudioPlayer {
     const existing = this.trackPlayers.get(trackId);
     if (existing) return existing;
@@ -612,6 +704,8 @@ export class WavAudioEngine {
           : this.targetBpm;
       const playbackRate =
         trackTargetBpm && originalBpm ? trackTargetBpm / originalBpm : 1;
+      player.setLowEqGainDb(track.lowEqGainDb ?? 0);
+      player.setHighEqGainDb(track.highEqGainDb ?? 0);
       player.setPlaybackRate(playbackRate);
       player.setDetuneSemitones(track.pitchSemitones ?? 0);
       player.setVolume(canPlay ? (track.volume ?? 1) : 0);
@@ -682,6 +776,7 @@ export class WavAudioEngine {
       this.masterGainNode.gain.value = this.masterVolume;
       this.masterGainNode.connect(ctx.destination);
       this.masterGainNode.connect(this.getRecordingDestination());
+      this.masterGainNode.connect(this.getMasterAnalyserNodeInternal());
     }
 
     if (!this.reverbInputNode) {
@@ -727,6 +822,16 @@ export class WavAudioEngine {
     }
 
     return impulse;
+  }
+
+  private getMasterAnalyserNodeInternal(): AnalyserNode {
+    if (!this.masterAnalyserNode) {
+      const ctx = this.getContext();
+      this.masterAnalyserNode = ctx.createAnalyser();
+      this.masterAnalyserNode.fftSize = 2048;
+      this.masterAnalyserNode.smoothingTimeConstant = 0.85;
+    }
+    return this.masterAnalyserNode;
   }
 
   private getRecordingDestination(): MediaStreamAudioDestinationNode {

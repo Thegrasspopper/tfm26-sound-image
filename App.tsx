@@ -14,17 +14,25 @@ const DEFAULT_MASTER_VOLUME = 0.8;
 const DEFAULT_AUDIO_DURATION_SEC = 10;
 const DEFAULT_TRACK_VOLUME = 0.8;
 const DEFAULT_TRACK_PITCH = 0;
+const DEFAULT_TRACK_LOW_EQ_DB = 0;
+const DEFAULT_TRACK_HIGH_EQ_DB = 0;
+const TRACK_SLIDER_LABEL_CLASS = "flex flex-col items-center text-[10px] tracking-widest uppercase text-slate-400";
+const TRACK_SLIDER_WRAP_CLASS = "h-16 w-7 flex items-center justify-center";
+const TRACK_SLIDER_INPUT_CLASS = "w-12 -rotate-90 bg-slate-800 text-white rounded outline-none";
+const TRACK_SLIDER_VALUE_CLASS = "text-white text-[10px] font-bold tabular-nums";
 
 const App: React.FC = () => {
   const [tracks, setTracks] = useState<SonicTrack[]>([]);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [isEncoding, setIsEncoding] = useState(false);
+  const [isBouncingTrack, setIsBouncingTrack] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
   const [globalError, setGlobalError] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [showSettings, setShowSettings] = useState<string | null>(null);
   const [exportingTrackId, setExportingTrackId] = useState<string | null>(null);
+  const [trackAudioImportTargetId, setTrackAudioImportTargetId] = useState<string | null>(null);
   const [regenerateDraft, setRegenerateDraft] = useState<null | {
     trackId: string;
     prompt: string;
@@ -53,6 +61,7 @@ const App: React.FC = () => {
   const midiSoundsRef = useRef<any>(null);
   const recordingIntervalRef = useRef<any>(null);
   const projectImportInputRef = useRef<HTMLInputElement>(null);
+  const trackAudioImportInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (midiSoundsRef.current) {
@@ -205,6 +214,8 @@ const App: React.FC = () => {
               : (typeof t.targetBpm === 'number' ? t.targetBpm : parsed.globalBpm ?? globalBpm)),
         targetBpm: typeof t.targetBpm === 'number' ? t.targetBpm : undefined,
         pitchSemitones: typeof t.pitchSemitones === 'number' ? t.pitchSemitones : 0,
+        lowEqGainDb: typeof t.lowEqGainDb === 'number' ? t.lowEqGainDb : DEFAULT_TRACK_LOW_EQ_DB,
+        highEqGainDb: typeof t.highEqGainDb === 'number' ? t.highEqGainDb : DEFAULT_TRACK_HIGH_EQ_DB,
         selectedInstrument: t.selectedInstrument,
         genre: String(t.genre || parsed.globalGenre || globalGenre),
         isMuted: !!t.isMuted,
@@ -237,6 +248,47 @@ const App: React.FC = () => {
     }
   };
 
+  const openTrackAudioImport = (trackId: string) => {
+    setTrackAudioImportTargetId(trackId);
+    trackAudioImportInputRef.current?.click();
+  };
+
+  const handleTrackAudioImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    const trackId = trackAudioImportTargetId;
+    e.target.value = '';
+    setTrackAudioImportTargetId(null);
+
+    if (!file || !trackId) return;
+
+    try {
+      setTracks((prev) => prev.map((t) => t.id === trackId ? { ...t, status: AppStatus.ANALYZING } : t));
+      await wavAudioEngine.loadTrackFromFile(trackId, file);
+      const localUrl = URL.createObjectURL(file);
+
+      setTracks((prev) => prev.map((t) => {
+        if (t.id !== trackId) return t;
+        if (typeof t.audioUrl === 'string' && t.audioUrl.startsWith('blob:')) {
+          URL.revokeObjectURL(t.audioUrl);
+        }
+        return {
+          ...t,
+          audioUrl: localUrl,
+          status: AppStatus.READY,
+        };
+      }));
+
+      if (isPlaying) {
+        await wavAudioEngine.playAll();
+      }
+      setGlobalError(null);
+    } catch (err: any) {
+      console.error("Track WAV import failed", err);
+      setTracks((prev) => prev.map((t) => t.id === trackId ? { ...t, status: AppStatus.READY } : t));
+      setGlobalError(err?.message || "Failed to import WAV into track.");
+    }
+  };
+
   const readFileAsDataUrl = (file: File): Promise<string> =>
     new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -244,6 +296,115 @@ const App: React.FC = () => {
       reader.onerror = () => reject(new Error(`Failed to read file: ${file.name}`));
       reader.readAsDataURL(file);
     });
+
+  const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+  const buildBounceTrackImage = (index: number) => {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360" viewBox="0 0 640 360"><defs><linearGradient id="g" x1="0" x2="1" y1="0" y2="1"><stop offset="0%" stop-color="#0f172a"/><stop offset="100%" stop-color="#164e63"/></linearGradient></defs><rect width="640" height="360" fill="url(#g)"/><text x="50%" y="45%" fill="#a5f3fc" font-family="Arial, sans-serif" font-size="34" text-anchor="middle">Bounced Track</text><text x="50%" y="60%" fill="#67e8f9" font-family="Arial, sans-serif" font-size="20" text-anchor="middle">Mix Print ${index}</text></svg>`;
+    return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+  };
+
+  const buildFallbackProfile = () => ({
+    emotion: { valence: 50, arousal: 50, dominance: 50, label: 'Neutral' },
+    musicalParameters: {
+      tempo: globalBpm,
+      mode: 'Modal',
+      articulation: 'Mixed',
+      register: 'Mid',
+      rhythmic_density: 5,
+      harmonic_tension: 5,
+      spectral_brightness: 5,
+      attack_speed: 'Medium',
+    },
+    soundDesign: {
+      instrument: 'mix',
+      waveform: 'hybrid',
+      texture: 'glued',
+      space: 'Slight reverb',
+    },
+  });
+
+  const bounceMixToNewTrack = async () => {
+    if (!wavAudioEngine.hasAnyLoadedBuffer() || tracks.length === 0) return;
+
+    const shouldResumePlayback = isPlaying;
+    const trackIdsForBounce = tracks
+      .filter((t) => !t.isMuted && !!wavAudioEngine.getTrackAudioBuffer(t.id))
+      .map((t) => t.id);
+
+    if (trackIdsForBounce.length === 0) {
+      setGlobalError("No unmuted tracks with audio are available to bounce.");
+      return;
+    }
+
+    const newTrackId = Math.random().toString(36).slice(2, 11);
+    const bounceDurationMs = Math.max(1000, Math.round(audioDurationSec * 1000));
+    const fallbackProfile = tracks[0]?.profile ?? buildFallbackProfile();
+
+    const tempTrack: SonicTrack = {
+      id: newTrackId,
+      image: buildBounceTrackImage(tracks.length + 1),
+      profile: fallbackProfile as any,
+      audioPrompt: `Bounced mix track (${Math.round(bounceDurationMs / 1000)}s)`,
+      sourceBpm: globalBpm,
+      targetBpm: globalBpm,
+      pitchSemitones: DEFAULT_TRACK_PITCH,
+      lowEqGainDb: DEFAULT_TRACK_LOW_EQ_DB,
+      highEqGainDb: DEFAULT_TRACK_HIGH_EQ_DB,
+      selectedInstrument: 'pad',
+      genre: globalGenre,
+      isMuted: false,
+      isSoloed: false,
+      volume: DEFAULT_TRACK_VOLUME,
+      status: AppStatus.ANALYZING,
+      filters: { brightness: 100, contrast: 100, saturation: 100, r: 100, g: 100, b: 100 },
+    };
+
+    try {
+      setIsBouncingTrack(true);
+      setGlobalError(null);
+      setTracks((prev) => [...prev, tempTrack]);
+
+      wavAudioEngine.stopAll();
+      await wavAudioEngine.startRecording();
+      await Promise.all(trackIdsForBounce.map((id) => wavAudioEngine.playTrack(id)));
+      await wait(bounceDurationMs);
+      wavAudioEngine.stopAll();
+
+      const bouncedBlob = await wavAudioEngine.stopRecording();
+      if (!bouncedBlob || bouncedBlob.size === 0) {
+        throw new Error("Bounce recording produced no audio.");
+      }
+
+      await wavAudioEngine.loadTrackFromBlob(newTrackId, bouncedBlob);
+      const bouncedUrl = URL.createObjectURL(bouncedBlob);
+      setTracks((prev) => prev.map((t) => t.id === newTrackId ? {
+        ...t,
+        audioUrl: bouncedUrl,
+        status: AppStatus.READY,
+      } : t));
+
+      if (shouldResumePlayback) {
+        await wavAudioEngine.playAll();
+        setIsPlaying(true);
+      } else {
+        setIsPlaying(false);
+      }
+    } catch (err: any) {
+      console.error("Bounce to track failed", err);
+      setTracks((prev) => prev.filter((t) => t.id !== newTrackId));
+      if (wavAudioEngine.isRecording()) {
+        try {
+          await wavAudioEngine.stopRecording();
+        } catch {
+          // Ignore stop failures during cleanup.
+        }
+      }
+      setGlobalError(err?.message || "Failed to bounce mix into a new track.");
+    } finally {
+      setIsBouncingTrack(false);
+    }
+  };
 
   const addTrackFromFile = async (file: File) => {
     const id = Math.random().toString(36).substr(2, 9);
@@ -258,6 +419,8 @@ const App: React.FC = () => {
       sourceBpm: globalBpm,
       targetBpm: globalBpm,
       pitchSemitones: 0,
+      lowEqGainDb: DEFAULT_TRACK_LOW_EQ_DB,
+      highEqGainDb: DEFAULT_TRACK_HIGH_EQ_DB,
       isMuted: false,
       isSoloed: false,
       volume: DEFAULT_TRACK_VOLUME,
@@ -415,12 +578,36 @@ const App: React.FC = () => {
     setTracks(prev => prev.map(t => t.id === id ? { ...t, pitchSemitones: next } : t));
   };
 
+  const changeTrackLowEq = (id: string, gainDb: number) => {
+    const next = Math.max(-18, Math.min(18, gainDb));
+    setTracks(prev => prev.map(t => t.id === id ? { ...t, lowEqGainDb: next } : t));
+    wavAudioEngine.setTrackLowEqGainDb(id, next);
+  };
+
+  const changeTrackHighEq = (id: string, gainDb: number) => {
+    const next = Math.max(-18, Math.min(18, gainDb));
+    setTracks(prev => prev.map(t => t.id === id ? { ...t, highEqGainDb: next } : t));
+    wavAudioEngine.setTrackHighEqGainDb(id, next);
+  };
+
   const toggleMuteAllTracks = () => {
     setTracks((prev) => {
       if (prev.length === 0) return prev;
       const areAllMuted = prev.every((t) => t.isMuted);
       return prev.map((t) => ({ ...t, isMuted: !areAllMuted }));
     });
+  };
+
+  const toggleSingleTrackPlayback = async (id: string) => {
+    try {
+      await wavAudioEngine.toggleTrackPlayback(id);
+      setIsPlaying(wavAudioEngine.isAnyPlayerPlaying());
+      setGlobalError(null);
+    } catch (err: any) {
+      console.error("Track playback toggle failed", err);
+      setGlobalError(err?.message || "Failed to play track.");
+      setIsPlaying(wavAudioEngine.isAnyPlayerPlaying());
+    }
   };
 
   const startPlayback = () => {
@@ -713,7 +900,7 @@ const App: React.FC = () => {
                       min="0"
                       value={audioGenGuidanceScale}
                       onChange={(e) => setAudioGenGuidanceScale(Math.max(0, parseFloat(e.target.value || '0')))}
-                      className="w-full bg-slate-800 text-white rounded px-2 py-1.5 text-xs border border-white/10 outline-none"
+                      className="w-full bg-slate-800 text-white rounded .5 text-xs border border-white/10 outline-none"
                     />
                   </label>
 
@@ -725,7 +912,7 @@ const App: React.FC = () => {
                       value={audioGenNumberOfSteps}
                       onChange={(e) => setAudioGenNumberOfSteps(e.target.value)}
                       placeholder="default"
-                      className="w-full bg-slate-800 text-white rounded px-2 py-1.5 text-xs border border-white/10 outline-none"
+                      className="w-full bg-slate-800 text-white rounded .5 text-xs border border-white/10 outline-none"
                     />
                   </label>
 
@@ -735,7 +922,7 @@ const App: React.FC = () => {
                       disabled={audioGenBackend !== 'ace'}
                       value={audioGenScheduler}
                       onChange={(e) => setAudioGenScheduler(e.target.value as "euler" | "heun")}
-                      className="w-full bg-slate-800 text-white rounded px-2 py-1.5 text-xs border border-white/10 outline-none disabled:opacity-40"
+                      className="w-full bg-slate-800 text-white rounded .5 text-xs border border-white/10 outline-none disabled:opacity-40"
                     >
                       <option value="euler">euler</option>
                       <option value="heun">heun</option>
@@ -748,7 +935,7 @@ const App: React.FC = () => {
                       disabled={audioGenBackend !== 'ace'}
                       value={audioGenGuidanceType}
                       onChange={(e) => setAudioGenGuidanceType(e.target.value as "cfg" | "apg" | "cfg_star")}
-                      className="w-full bg-slate-800 text-white rounded px-2 py-1.5 text-xs border border-white/10 outline-none disabled:opacity-40"
+                      className="w-full bg-slate-800 text-white rounded .5 text-xs border border-white/10 outline-none disabled:opacity-40"
                     >
                       <option value="cfg">cfg</option>
                       <option value="apg">apg</option>
@@ -758,32 +945,32 @@ const App: React.FC = () => {
 
                   <label className="text-[10px] text-slate-300 space-y-1">
                     <span className="uppercase tracking-widest">Granularity</span>
-                    <input disabled={audioGenBackend !== 'ace'} type="number" step="0.1" value={audioGenGranularityScale} onChange={(e) => setAudioGenGranularityScale(e.target.value)} placeholder="default" className="w-full bg-slate-800 text-white rounded px-2 py-1.5 text-xs border border-white/10 outline-none disabled:opacity-40" />
+                    <input disabled={audioGenBackend !== 'ace'} type="number" step="0.1" value={audioGenGranularityScale} onChange={(e) => setAudioGenGranularityScale(e.target.value)} placeholder="default" className="w-full bg-slate-800 text-white rounded .5 text-xs border border-white/10 outline-none disabled:opacity-40" />
                   </label>
 
                   <label className="text-[10px] text-slate-300 space-y-1">
                     <span className="uppercase tracking-widest">Guidance Interval</span>
-                    <input disabled={audioGenBackend !== 'ace'} type="number" step="0.01" value={audioGenGuidanceInterval} onChange={(e) => setAudioGenGuidanceInterval(e.target.value)} placeholder="default" className="w-full bg-slate-800 text-white rounded px-2 py-1.5 text-xs border border-white/10 outline-none disabled:opacity-40" />
+                    <input disabled={audioGenBackend !== 'ace'} type="number" step="0.01" value={audioGenGuidanceInterval} onChange={(e) => setAudioGenGuidanceInterval(e.target.value)} placeholder="default" className="w-full bg-slate-800 text-white rounded .5 text-xs border border-white/10 outline-none disabled:opacity-40" />
                   </label>
 
                   <label className="text-[10px] text-slate-300 space-y-1">
                     <span className="uppercase tracking-widest">Interval Decay</span>
-                    <input disabled={audioGenBackend !== 'ace'} type="number" step="0.01" value={audioGenGuidanceIntervalDecay} onChange={(e) => setAudioGenGuidanceIntervalDecay(e.target.value)} placeholder="default" className="w-full bg-slate-800 text-white rounded px-2 py-1.5 text-xs border border-white/10 outline-none disabled:opacity-40" />
+                    <input disabled={audioGenBackend !== 'ace'} type="number" step="0.01" value={audioGenGuidanceIntervalDecay} onChange={(e) => setAudioGenGuidanceIntervalDecay(e.target.value)} placeholder="default" className="w-full bg-slate-800 text-white rounded .5 text-xs border border-white/10 outline-none disabled:opacity-40" />
                   </label>
 
                   <label className="text-[10px] text-slate-300 space-y-1">
                     <span className="uppercase tracking-widest">Min Guidance</span>
-                    <input disabled={audioGenBackend !== 'ace'} type="number" step="0.1" value={audioGenMinimumGuidanceScale} onChange={(e) => setAudioGenMinimumGuidanceScale(e.target.value)} placeholder="default" className="w-full bg-slate-800 text-white rounded px-2 py-1.5 text-xs border border-white/10 outline-none disabled:opacity-40" />
+                    <input disabled={audioGenBackend !== 'ace'} type="number" step="0.1" value={audioGenMinimumGuidanceScale} onChange={(e) => setAudioGenMinimumGuidanceScale(e.target.value)} placeholder="default" className="w-full bg-slate-800 text-white rounded .5 text-xs border border-white/10 outline-none disabled:opacity-40" />
                   </label>
 
                   <label className="text-[10px] text-slate-300 space-y-1">
                     <span className="uppercase tracking-widest">Tag Guidance</span>
-                    <input disabled={audioGenBackend !== 'ace'} type="number" step="0.1" value={audioGenTagGuidanceScale} onChange={(e) => setAudioGenTagGuidanceScale(e.target.value)} placeholder="default" className="w-full bg-slate-800 text-white rounded px-2 py-1.5 text-xs border border-white/10 outline-none disabled:opacity-40" />
+                    <input disabled={audioGenBackend !== 'ace'} type="number" step="0.1" value={audioGenTagGuidanceScale} onChange={(e) => setAudioGenTagGuidanceScale(e.target.value)} placeholder="default" className="w-full bg-slate-800 text-white rounded .5 text-xs border border-white/10 outline-none disabled:opacity-40" />
                   </label>
 
                   <label className="text-[10px] text-slate-300 space-y-1">
                     <span className="uppercase tracking-widest">Lyric Guidance</span>
-                    <input disabled={audioGenBackend !== 'ace'} type="number" step="0.1" value={audioGenLyricGuidanceScale} onChange={(e) => setAudioGenLyricGuidanceScale(e.target.value)} placeholder="default" className="w-full bg-slate-800 text-white rounded px-2 py-1.5 text-xs border border-white/10 outline-none disabled:opacity-40" />
+                    <input disabled={audioGenBackend !== 'ace'} type="number" step="0.1" value={audioGenLyricGuidanceScale} onChange={(e) => setAudioGenLyricGuidanceScale(e.target.value)} placeholder="default" className="w-full bg-slate-800 text-white rounded .5 text-xs border border-white/10 outline-none disabled:opacity-40" />
                   </label>
                 </div>
               )}
@@ -815,12 +1002,32 @@ const App: React.FC = () => {
               <span className="hidden sm:inline">Export</span>
             </button>
 
+            <button
+              onClick={() => void bounceMixToNewTrack()}
+              disabled={!wavAudioEngine.hasAnyLoadedBuffer() || isEncoding || isProcessing || isBouncingTrack}
+              className={`flex items-center gap-2 py-3 px-4 rounded-2xl font-bold border border-white/10 shadow-lg ${(!wavAudioEngine.hasAnyLoadedBuffer() || isEncoding || isProcessing || isBouncingTrack)
+                  ? 'bg-slate-700 text-slate-300 cursor-not-allowed'
+                  : 'bg-cyan-700 text-white hover:bg-cyan-600'
+                }`}
+              title="Record current mix into a new track"
+            >
+              {isBouncingTrack ? <Loader2 className="w-4 h-4 animate-spin" /> : <Circle className="w-4 h-4" />}
+              <span className="hidden sm:inline">{isBouncingTrack ? 'Bouncing...' : 'Bounce Track'}</span>
+            </button>
+
             <input
               ref={projectImportInputRef}
               type="file"
               accept="application/json,.json"
               className="hidden"
               onChange={handleImportProject}
+            />
+            <input
+              ref={trackAudioImportInputRef}
+              type="file"
+              accept=".wav,audio/wav,audio/x-wav,audio/wave"
+              className="hidden"
+              onChange={handleTrackAudioImport}
             />
             <button
               onClick={() => projectImportInputRef.current?.click()}
@@ -835,6 +1042,8 @@ const App: React.FC = () => {
         <section className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
           {tracks.map((track) => {
             const effectiveTrackBpm = Math.round(track.targetBpm ?? globalBpm);
+            const trackIsPlaying = wavAudioEngine.isTrackPlaying(track.id);
+            const hasTrackAudio = !!wavAudioEngine.getTrackAudioBuffer(track.id);
             return (
               <div
                 key={track.id}
@@ -883,7 +1092,15 @@ const App: React.FC = () => {
 
                   <div className="absolute inset-0 bg-gradient-to-t from-slate-900/90 via-transparent to-transparent pointer-events-none" />
 
-                  <div className="absolute top-4 right-4 flex flex-col gap-2 z-10">
+                  <div className="absolute top-4 right-4 flex flex-col gap-2 z-10 p-1">
+                    <button
+                      onClick={() => openTrackAudioImport(track.id)}
+                      disabled={track.status === AppStatus.ANALYZING}
+                      className="p-2 bg-cyan-600/90 hover:bg-cyan-500 text-white rounded-lg shadow-lg backdrop-blur-sm transition-all disabled:opacity-50"
+                      title="Upload WAV to this track"
+                    >
+                      <Upload className="w-4 h-4" />
+                    </button>
                     <button
                       onClick={() => exportTrackSequenceAsMp3(track)}
                       disabled={exportingTrackId === track.id || track.status !== AppStatus.READY}
@@ -906,73 +1123,129 @@ const App: React.FC = () => {
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
+                    
+                    <div className="mt-2 flex items-center justify-end text-[10px] font-black tracking-widest uppercase text-slate-400">
+                    <Timer className="w-3 h-3 mr-1 text-pink-400" />
+                    {effectiveTrackBpm} BPM
+                  </div>
                   </div>
                 </div>
 
                 <div className="p-5 bg-slate-900/40 flex flex-col gap-4">
 
-                  <div className="flex items-center gap-4">
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => toggleSolo(track.id)}
-                        className={`p-2 rounded-lg transition-all ${track.isSoloed ? 'bg-pink-500 text-slate-900' : 'bg-slate-800 text-slate-500 hover:text-white'}`}
-                      >
-                        <Headphones className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        onClick={() => toggleMute(track.id)}
-                        className={`p-2 rounded-lg transition-all ${track.isMuted ? 'bg-red-500/20 text-red-400' : 'bg-slate-800 text-slate-500 hover:text-white'}`}
-                      >
-                        {track.isMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
-                      </button>
-                      <button
-                        onClick={() => resetTrackBpmToOwn(track.id)}
-                        className="p-2 rounded-lg transition-all bg-slate-800 text-slate-400 hover:text-white"
-                        title="Reset this track BPM to its own original BPM"
-                      >
-                        <Timer className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                    <label className="flex items-center gap-2 text-[10px] normal-case tracking-normal">
-                      <input
-                        type="range" min="0" max="2.0" step="0.01"
-                        value={track.volume}
-                        onChange={(e) => updateTrackVolume(track.id, parseFloat(e.target.value))}
-                        onDoubleClick={() => updateTrackVolume(track.id, DEFAULT_TRACK_VOLUME)}
-                        className="w-16 bg-slate-800 text-white rounded px-2 py-1 text-[15px] font-bold outline-none"
-                      />
-                      <span className="text-white text-xs font-bold w-8 text-center tabular-nums">
-                        {(track.volume * 100).toFixed(0)}
-                      </span>
-                    </label>
-                    
-                    <label className="flex items-center gap-2 text-[10px] normal-case tracking-normal">
-                      <Music3Icon className="w-3 h-3 text-slate-200" />
-                      <input
-                        type="range"
-                        min="-12"
-                        max="12"
-                        step="1"
-                        value={track.pitchSemitones ?? 0}
-                        onChange={(e) => changeTrackPitch(track.id, parseInt(e.target.value || '0', 10))}
-                        onDoubleClick={() => changeTrackPitch(track.id, DEFAULT_TRACK_PITCH)}
-                        className="w-16 bg-slate-800 text-white rounded px-2 py-1 text-[15px] font-bold outline-none"
-                      />
-                      <span className="text-white text-xs font-bold w-10 text-center tabular-nums">
-                        {(track.pitchSemitones ?? 0) > 0 ? `+${track.pitchSemitones}` : (track.pitchSemitones ?? 0)}
-                      </span>
-                        </label>
-                        
-                  </div>
-                  <AudioVisualizer
+                    <div className="flex items-center gap-3 p-1">
+                     <div>
+                    <AudioVisualizer
                     isPlaying={wavAudioEngine.isTrackPlaying(track.id)}
                     audioBuffer={wavAudioEngine.getTrackAudioBuffer(track.id)}
                     audioContext={wavAudioEngine.getAudioContextIfAvailable()}
                     getCurrentTime={() => wavAudioEngine.getTrackCurrentTime(track.id)}
                   />
-                    <div className="mt-2 flex items-center justify-end text-[10px] font-black tracking-widest uppercase text-slate-400">
-                    <Timer className="w-3 h-3 mr-1 text-pink-400" />
-                    {effectiveTrackBpm} BPM
+                      <button
+                        onClick={() => void toggleSingleTrackPlayback(track.id)}
+                        disabled={!hasTrackAudio || isEncoding}
+                        className={`p-2 m-1.5 rounded-lg transition-all ${trackIsPlaying
+                            ? 'bg-emerald-500 text-slate-900'
+                            : hasTrackAudio
+                              ? 'bg-slate-800 text-slate-300 hover:text-white'
+                              : 'bg-slate-800 text-slate-600 cursor-not-allowed'
+                          }`}
+                        title={trackIsPlaying ? "Pause track" : "Play track"}
+                      >
+                        {trackIsPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                      </button>
+                      <button
+                        onClick={() => toggleSolo(track.id)}
+                        className={`p-2 m-1.5 rounded-lg transition-all ${track.isSoloed ? 'bg-pink-500 text-slate-900' : 'bg-slate-800 text-slate-500 hover:text-white'}`}
+                      >
+                        <Headphones className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={() => toggleMute(track.id)}
+                        className={`p-2 m-1.5 rounded-lg transition-all ${track.isMuted ? 'bg-red-500/20 text-red-400' : 'bg-slate-800 text-slate-500 hover:text-white'}`}
+                      >
+                        {track.isMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
+                      </button>
+                      <button
+                        onClick={() => resetTrackBpmToOwn(track.id)}
+                        className="p-2 m-1.5 rounded-lg transition-all bg-slate-800 text-slate-400 hover:text-white"
+                        title="Reset this track BPM to its own original BPM"
+                      >
+                        <Timer className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                    <label className={TRACK_SLIDER_LABEL_CLASS}>
+                      <span>Vol</span>
+                      <div className={TRACK_SLIDER_WRAP_CLASS}>
+                        <input
+                          type="range" min="0" max="2.0" step="0.01"
+                          value={track.volume}
+                          onChange={(e) => updateTrackVolume(track.id, parseFloat(e.target.value))}
+                          onDoubleClick={() => updateTrackVolume(track.id, DEFAULT_TRACK_VOLUME)}
+                          className={TRACK_SLIDER_INPUT_CLASS}
+                        />
+                      </div>
+                      <span className={TRACK_SLIDER_VALUE_CLASS}>
+                        {(track.volume * 100).toFixed(0)}
+                      </span>
+                    </label>
+
+                    <label className={TRACK_SLIDER_LABEL_CLASS}>
+                      <span>PITCH</span>
+                      <div className={TRACK_SLIDER_WRAP_CLASS}>
+                        <input
+                          type="range"
+                          min="-12"
+                          max="12"
+                          step="1"
+                          value={track.pitchSemitones ?? 0}
+                          onChange={(e) => changeTrackPitch(track.id, parseInt(e.target.value || '0', 10))}
+                          onDoubleClick={() => changeTrackPitch(track.id, DEFAULT_TRACK_PITCH)}
+                          className={TRACK_SLIDER_INPUT_CLASS}
+                        />
+                      </div>
+                      <span className={TRACK_SLIDER_VALUE_CLASS}>
+                        {(track.pitchSemitones ?? 0) > 0 ? `+${track.pitchSemitones}` : (track.pitchSemitones ?? 0)}
+                      </span>
+                    </label>
+
+                    <label className={TRACK_SLIDER_LABEL_CLASS}>
+                      <span>Low</span>
+                      <div className={TRACK_SLIDER_WRAP_CLASS}>
+                        <input
+                          type="range"
+                          min="-18"
+                          max="18"
+                          step="0.5"
+                          value={track.lowEqGainDb ?? DEFAULT_TRACK_LOW_EQ_DB}
+                          onChange={(e) => changeTrackLowEq(track.id, parseFloat(e.target.value))}
+                          onDoubleClick={() => changeTrackLowEq(track.id, DEFAULT_TRACK_LOW_EQ_DB)}
+                          className={TRACK_SLIDER_INPUT_CLASS}
+                        />
+                      </div>
+                      <span className={TRACK_SLIDER_VALUE_CLASS}>
+                        {(track.lowEqGainDb ?? 0) > 0 ? `+${(track.lowEqGainDb ?? 0).toFixed(1)}` : (track.lowEqGainDb ?? 0).toFixed(1)}
+                      </span>
+                    </label>
+
+                    <label className={TRACK_SLIDER_LABEL_CLASS}>
+                      <span>High</span>
+                      <div className={TRACK_SLIDER_WRAP_CLASS}>
+                        <input
+                          type="range"
+                          min="-18"
+                          max="18"
+                          step="0.5"
+                          value={track.highEqGainDb ?? DEFAULT_TRACK_HIGH_EQ_DB}
+                          onChange={(e) => changeTrackHighEq(track.id, parseFloat(e.target.value))}
+                          onDoubleClick={() => changeTrackHighEq(track.id, DEFAULT_TRACK_HIGH_EQ_DB)}
+                          className={TRACK_SLIDER_INPUT_CLASS}
+                        />
+                      </div>
+                      <span className={TRACK_SLIDER_VALUE_CLASS}>
+                        {(track.highEqGainDb ?? 0) > 0 ? `+${(track.highEqGainDb ?? 0).toFixed(1)}` : (track.highEqGainDb ?? 0).toFixed(1)}
+                      </span>
+                    </label>
                   </div>
                 </div>
               </div>
@@ -1050,7 +1323,7 @@ const App: React.FC = () => {
                     max="60"
                     value={regenerateDraft.duration}
                     onChange={(e) => setRegenerateDraft(prev => prev ? { ...prev, duration: Math.max(1, Math.min(60, parseInt(e.target.value || '10', 10))) } : prev)}
-                    className="w-20 rounded-lg bg-slate-800 text-white px-2 py-1 outline-none"
+                    className="w-20 rounded-lg bg-slate-800 text-white  outline-none"
                   />
                 </div>
               </label>

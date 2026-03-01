@@ -78,7 +78,7 @@ const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ isPlaying, audioBuffe
   return (
     <canvas 
       ref={canvasRef} 
-      width={400} 
+      width={380} 
       height={100} 
       className="w-full h-14 rounded-lg bg-slate-900/50"
     />
