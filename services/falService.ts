@@ -3,6 +3,7 @@ import { fal } from "@fal-ai/client";
 const FAL_MODEL_PATH = "fal-ai/stable-audio-25/audio-to-audio";
 const FAL_TEXT_TO_AUDIO_MODEL_PATH = "fal-ai/stable-audio-25/text-to-audio";
 const FAL_TEXT_TO_AUIDO_ACE_MODEL_PATH = "fal-ai/ace-step/prompt-to-audio";
+const FAL_TEXT_TO_AUDIO_BEATOVEN_MODEL_PATH = "beatoven/music-generation";
 
 
 export interface FalTextToAudioInput {
@@ -11,6 +12,15 @@ export interface FalTextToAudioInput {
   num_inference_steps?: number;
   guidance_scale?: number;
   seconds_total?: number;
+}
+
+export interface FalTextToAudioBeatovenInput {
+  prompt: string;
+  negative_prompt?: string;
+  duration?: number;
+  refinement?: number;
+  creativity?: number;
+  seed?: number;
 }
 
 
@@ -180,3 +190,36 @@ export const runFalAudioToAudioViaWp = async (
   return (await res.json()) as FalAudioToAudioResult;
 };
 
+export const runTextToAudioWithFalBeatoven = async (
+  input: FalTextToAudioBeatovenInput,
+  options?: {
+    apiKey?: string;
+  }
+): Promise<FalAudioToAudioResult> => {
+  const apiKey = options?.apiKey || getFalApiKey();
+  if (!apiKey) {
+    throw new Error("FAL API key missing. Set process.env.FAL_KEY or use a WP proxy endpoint.");
+  }
+
+  fal.config({
+    credentials: apiKey,
+  });
+
+  const result = await fal.subscribe(FAL_TEXT_TO_AUDIO_BEATOVEN_MODEL_PATH, {
+    input,
+    logs: true,
+    onQueueUpdate: (update: any) => {
+      if (update.status === "IN_PROGRESS") {
+        (update.logs || [])
+          .map((log: any) => log?.message)
+          .filter(Boolean)
+          .forEach((message: string) => console.log(message));
+      }
+    },
+  });
+
+  return {
+    ...(result.data || {}),
+    request_id: result.requestId,
+  } as FalAudioToAudioResult;
+};

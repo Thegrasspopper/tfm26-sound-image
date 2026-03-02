@@ -4,16 +4,6 @@ import { GEMINI_ALLOWED_INSTRUMENTS, SonicProfile } from "../types";
 
 const DEFAULT_GEMINI_INSTRUMENT = "piano";
 const GEMINI_INSTRUMENT_SET = new Set<string>(GEMINI_ALLOWED_INSTRUMENTS);
-/**
- * Guia de correspondencia instrumento-emocion (usar como prioridad timbrica):
-- Trompeta y saxofon: alegria/jubilo; saxofon y corneta tambien pueden transmitir ira por timbre rugoso y amenazante.
-- Clarinete y flauta: frecuentemente asociados con tristeza.
-- Violin: versatil; puede funcionar para tristeza (lamento) y tambien alegria segun contexto.
-- Trompa (horn): tendencia mas neutral en algunos estudios.
-- Oboe y fagot: sesgo hacia tristeza; fagot puede volverse mas romantico con mucha reverberacion.
-- Teclado y percusion tonal (marimba, vibrafono, piano): tendencia hacia felicidad.
-
- */
 const INSTRUMENT_EMOTION_GUIDE_ES = `
 Instrument-emotion correspondence guide (use as timbral priority):
 - Trumpet and saxophone: joy/jubilation; saxophone and cornet can also convey anger due to rough, threatening timbre.

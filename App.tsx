@@ -2,9 +2,9 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Play, Pause, RefreshCw, Image as  Music, Plus, Trash2, Volume2, VolumeX,  Timer, Headphones, Square, Circle, Wand2, ChevronUp, Loader2, Download, Upload, Music3Icon, Sun, Moon } from 'lucide-react';
 // @ts-ignore
-import { AppStatus, SonicTrack, InstrumentType, getInstrumentsForGenre, FilterState } from './types';
+import { AppStatus, SonicTrack, InstrumentType, SonicProfile } from './types';
 import { composeFromImage } from './services/geminiService';
-import { runTextoToAuidoWithFalAce, FalTextToAudioAceResult,runTextToAudioWithFal } from './services/falService';
+import { runTextoToAuidoWithFalAce, FalTextToAudioAceResult, runTextToAudioWithFal, runTextToAudioWithFalBeatoven } from './services/falService';
 import { wavAudioEngine } from "./services/wavAudioEngine";
 import AudioVisualizer from './components/AudioVisualizer';
 
@@ -16,6 +16,7 @@ const DEFAULT_TRACK_VOLUME = 0.8;
 const DEFAULT_TRACK_PITCH = 0;
 const DEFAULT_TRACK_LOW_EQ_DB = 0;
 const DEFAULT_TRACK_HIGH_EQ_DB = 0;
+type PromptTemplateMode = 'current' | 'single_instrument' | 'base_track';
 const TRACK_SLIDER_LABEL_CLASS = "flex flex-col items-center text-[10px] tracking-widest uppercase text-slate-400";
 const TRACK_SLIDER_WRAP_CLASS = "h-16 w-7 flex items-center justify-center";
 const TRACK_SLIDER_INPUT_CLASS = "w-12 -rotate-90 bg-slate-800 text-white rounded outline-none";
@@ -50,7 +51,7 @@ const App: React.FC = () => {
   const [audioDurationSec, setAudioDurationSec] = useState<number>(DEFAULT_AUDIO_DURATION_SEC);
   const [showAdvancedAudio, setShowAdvancedAudio] = useState(false);
   const [audioGenInstrumental, setAudioGenInstrumental] = useState(true);
-  const [audioGenBackend, setAudioGenBackend] = useState<'ace' | 'standard'>('ace');
+  const [audioGenBackend, setAudioGenBackend] = useState<'ace' | 'standard' | 'beatoven'>('ace');
   const [audioGenGuidanceScale, setAudioGenGuidanceScale] = useState<number>(15);
   const [audioGenNumberOfSteps, setAudioGenNumberOfSteps] = useState<string>('');
   const [audioGenScheduler, setAudioGenScheduler] = useState<"euler" | "heun">("euler");
@@ -61,6 +62,7 @@ const App: React.FC = () => {
   const [audioGenMinimumGuidanceScale, setAudioGenMinimumGuidanceScale] = useState<string>('');
   const [audioGenTagGuidanceScale, setAudioGenTagGuidanceScale] = useState<string>('');
   const [audioGenLyricGuidanceScale, setAudioGenLyricGuidanceScale] = useState<string>('');
+  const [promptTemplateMode, setPromptTemplateMode] = useState<PromptTemplateMode>('current');
   const [globalGenre, setGlobalGenre] = useState<string>("Modern Pop");
   const [masterVolume, setMasterVolume] = useState<number>(DEFAULT_MASTER_VOLUME);
 
@@ -132,6 +134,37 @@ const App: React.FC = () => {
       reader.readAsDataURL(blob);
     });
 
+  const buildAudioPromptFromProfile = (
+    profile: SonicProfile,
+    mode: PromptTemplateMode
+  ): string => {
+    const emotionLabel = String(profile?.emotion?.label || 'expressive').toLowerCase();
+    const musicalMode = String(profile?.musicalParameters?.mode || 'modal');
+    const tempo = Number(profile?.musicalParameters?.tempo) || globalBpm;
+    const register = String(profile?.musicalParameters?.register || 'mid');
+    const articulation = String(profile?.musicalParameters?.articulation || 'mixed');
+    const mainInstrument = String(profile?.soundDesign?.instrument || 'synth');
+    const texture = String(profile?.soundDesign?.texture || 'balanced');
+    const space = String(profile?.soundDesign?.space || 'subtle reverb');
+
+    if (mode === 'single_instrument') {
+      return `Create a ${emotionLabel} instrumental in ${musicalMode} mode at ${tempo} BPM.
+Use only ${profile.soundDesign.instrument} for all musical content. Do not use any other instruments, layers, drums, vocals, or effects-based ear candy.
+Focus on one coherent, realistic performance with clean dynamics and a mix-ready result.`;
+    }
+
+    if (mode === 'base_track') {
+      return `Create a ${emotionLabel}-inspired base track in ${musicalMode} mode at ${tempo} BPM.
+Build a simple foundational groove and harmony bed that leaves room for future layers and lead elements.
+Keep arrangement minimal, predictable, and loop-friendly with controlled energy and clean low-end.`;
+    }
+
+    return `Create a ${emotionLabel}-inspired minimalist instrumental in ${musicalMode} mode at ${tempo} BPM.
+Use ${mainInstrument} as the main element, played in the ${register} register with ${articulation} articulation.
+Texture should be ${texture} with ${space}.
+Keep it as a single realistic, mix-ready instrumental layer.`;
+  };
+
   const generateAudioWithSelectedFal = async (
     prompt: string,
     options?: { instrumental?: boolean; duration?: number }
@@ -146,6 +179,13 @@ const App: React.FC = () => {
         guidance_scale: Math.max(0, audioGenGuidanceScale),
         seconds_total: duration,
         ...(steps !== undefined ? { num_inference_steps: Math.max(1, Math.round(steps)) } : {}),
+      });
+    }
+
+    if (audioGenBackend === 'beatoven') {
+      return runTextToAudioWithFalBeatoven({
+        prompt,
+        duration,
       });
     }
 
@@ -486,10 +526,7 @@ const App: React.FC = () => {
         status: AppStatus.READY,
       } : t));
 
-      const audioPrompt = `Create a ${result.emotion.label.toLowerCase()}-inspired minimalist instrumental in ${result.musicalParameters.mode} mode at ${result.musicalParameters.tempo} BPM. 
-          Use ${result.soundDesign.instrument} as the main element, played in the ${result.musicalParameters.register} register with ${result.musicalParameters.articulation} articulation. 
-          Texture should be ${result.soundDesign.texture} with ${result.soundDesign.space}. 
-          Keep it as a single realistic, mix-ready instrumental layer.`;
+      const audioPrompt = buildAudioPromptFromProfile(result, promptTemplateMode);
 
       const falResult = await generateAudioWithSelectedFal(audioPrompt);
       console.log("Result: ", falResult);
@@ -523,10 +560,15 @@ const App: React.FC = () => {
     const track = tracks.find(t => t.id === id);
     if (!track) return;
 
-    const currentPrompt =
+    const savedPrompt =
       track.audioPrompt ||
       ((track as any).audioPrompt2 ?? '') ||
       '';
+    const templatedPrompt = buildAudioPromptFromProfile(track.profile, promptTemplateMode);
+    const currentPrompt = promptTemplateMode === 'current'
+      ? (savedPrompt || templatedPrompt)
+      : templatedPrompt;
+
     setRegenerateDraft({
       trackId: id,
       prompt: currentPrompt,
@@ -914,7 +956,7 @@ const App: React.FC = () => {
                 <div className="rounded-xl border border-white/10 bg-slate-900/50 p-3 grid grid-cols-2 gap-3">
                   <label className="col-span-2 text-[10px] text-slate-300 space-y-1">
                     <span className="uppercase tracking-widest">Generator</span>
-                    <div className="grid grid-cols-2 gap-2">
+                    <div className="grid grid-cols-3 gap-2">
                       <button
                         type="button"
                         onClick={() => setAudioGenBackend('ace')}
@@ -929,13 +971,36 @@ const App: React.FC = () => {
                       >
                         Standard
                       </button>
+                      <button
+                        type="button"
+                        onClick={() => setAudioGenBackend('beatoven')}
+                        className={`rounded-lg px-3 py-2 text-xs font-bold border transition-all ${audioGenBackend === 'beatoven' ? 'bg-indigo-600 text-white border-indigo-400' : 'bg-slate-800 text-slate-300 border-white/10 hover:bg-slate-700'}`}
+                      >
+                        Beatoven
+                      </button>
                     </div>
                     <span className="block text-[10px] text-slate-500">
                       {audioGenBackend === 'ace'
                         ? 'ACE mode uses scheduler, guidance type and ACE-specific guidance controls.'
-                        : 'Standard mode uses prompt, duration, guidance and optional steps. ACE-only controls are ignored.'}
+                        : audioGenBackend === 'standard'
+                          ? 'Standard mode uses prompt, duration, guidance and optional steps. ACE-only controls are ignored.'
+                          : 'Beatoven mode uses prompt and duration. Standard and ACE-only controls are ignored.'}
                     </span>
                   </label>
+
+                  <label className="col-span-2 text-[10px] text-slate-300 space-y-1">
+                    <span className="uppercase tracking-widest">Prompt Template</span>
+                    <select
+                      value={promptTemplateMode}
+                      onChange={(e) => setPromptTemplateMode(e.target.value as PromptTemplateMode)}
+                      className="w-full bg-slate-800 text-white rounded .5 text-xs border border-white/10 outline-none"
+                    >
+                      <option value="current">1. Current prompt</option>
+                      <option value="single_instrument">2. One specific instrument</option>
+                      <option value="base_track">3. Base track</option>
+                    </select>
+                  </label>
+
 
                   <label className="col-span-2 flex items-center justify-between text-xs text-slate-200">
                     <span>Instrumental</span>
