@@ -77,6 +77,8 @@ export interface SonicTrack {
   pitchSemitones?: number;
   lowEqGainDb?: number;
   highEqGainDb?: number;
+  cutStartSec?: number;
+  cutEndSec?: number;
   selectedInstrument: InstrumentType;
   genre: string;
   isMuted: boolean;

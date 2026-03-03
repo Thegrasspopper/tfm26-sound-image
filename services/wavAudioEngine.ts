@@ -20,6 +20,8 @@ export class WavAudioPlayer {
   private detuneCents = 0;
   private lowEqGainDb = 0;
   private highEqGainDb = 0;
+  private segmentStartSec = 0;
+  private segmentEndSec: number | null = null;
 
   constructor(
     private readonly getContextFn: () => AudioContext,
@@ -70,6 +72,9 @@ export class WavAudioPlayer {
     const source = ctx.createBufferSource();
     source.buffer = this.audioBuffer;
     source.loop = true;
+    const segment = this.getSegmentBounds();
+    source.loopStart = segment.start;
+    source.loopEnd = segment.end;
     source.playbackRate.value = this.playbackRate;
     source.detune.value = this.detuneCents;
     source.connect(this.getHighPassNode());
@@ -82,20 +87,22 @@ export class WavAudioPlayer {
     };
 
     this.sourceNode = source;
-    this.playStartOffset = this.pausedOffset;
+    const initialOffset = this.clampToSegment(this.pausedOffset);
+    this.playStartOffset = initialOffset;
     this.startedAt = ctx.currentTime;
     this.isPlayingInternal = true;
-    source.start(0, this.pausedOffset);
+    source.start(0, initialOffset);
   }
 
   public pause(): void {
     const ctx = this.getContextFn();
     if (!this.isPlayingInternal || !this.sourceNode) return;
 
-    const duration = this.audioBuffer?.duration ?? 0;
+    const segment = this.getSegmentBounds();
+    const span = Math.max(0.001, segment.end - segment.start);
     const elapsed = Math.max(0, ctx.currentTime - this.startedAt) * this.getEffectivePlaybackRate();
-    const position = this.playStartOffset + elapsed;
-    this.pausedOffset = duration > 0 ? position % duration : 0;
+    const localPosition = ((this.playStartOffset - segment.start) + elapsed) % span;
+    this.pausedOffset = segment.start + (localPosition < 0 ? localPosition + span : localPosition);
     this.isPlayingInternal = false;
 
     const source = this.sourceNode;
@@ -114,15 +121,13 @@ export class WavAudioPlayer {
       source.disconnect();
     }
     this.isPlayingInternal = false;
-    this.playStartOffset = 0;
-    this.pausedOffset = 0;
+    this.playStartOffset = this.segmentStartSec;
+    this.pausedOffset = this.segmentStartSec;
   }
 
   public async seek(seconds: number): Promise<void> {
     if (!this.audioBuffer) return;
-    const duration = Math.max(0, this.audioBuffer.duration);
-    const maxSeek = duration > 0 ? Math.max(0, duration - 0.001) : 0;
-    const clamped = Math.max(0, Math.min(seconds, maxSeek));
+    const clamped = this.clampToSegment(seconds);
     const wasPlaying = this.isPlayingInternal;
     if (wasPlaying) {
       this.pause();
@@ -130,6 +135,25 @@ export class WavAudioPlayer {
     this.pausedOffset = clamped;
     this.playStartOffset = clamped;
     if (wasPlaying) {
+      await this.play();
+    }
+  }
+
+  public async setLoopRegion(startSec: number, endSec?: number): Promise<void> {
+    const duration = this.audioBuffer?.duration ?? 0;
+    const maxEnd = duration > 0 ? duration : Number.POSITIVE_INFINITY;
+    const start = Math.max(0, Math.min(Number.isFinite(startSec) ? startSec : 0, Math.max(0, maxEnd - 0.001)));
+    const requestedEnd = typeof endSec === "number" && Number.isFinite(endSec) ? endSec : maxEnd;
+    const end = Math.max(start + 0.001, Math.min(requestedEnd, maxEnd));
+
+    this.segmentStartSec = start;
+    this.segmentEndSec = Number.isFinite(end) ? end : null;
+
+    this.pausedOffset = this.clampToSegment(this.pausedOffset);
+    this.playStartOffset = this.clampToSegment(this.playStartOffset);
+
+    if (this.isPlayingInternal) {
+      this.pause();
       await this.play();
     }
   }
@@ -145,10 +169,11 @@ export class WavAudioPlayer {
 
     if (this.isPlayingInternal && this.audioBuffer) {
       const ctx = this.getContextFn();
-      const duration = this.audioBuffer.duration;
+      const segment = this.getSegmentBounds();
+      const span = Math.max(0.001, segment.end - segment.start);
       const elapsed = Math.max(0, ctx.currentTime - this.startedAt) * this.getEffectivePlaybackRate();
-      const position = duration > 0 ? (this.playStartOffset + elapsed) % duration : 0;
-      this.playStartOffset = position;
+      const localPosition = ((this.playStartOffset - segment.start) + elapsed) % span;
+      this.playStartOffset = segment.start + (localPosition < 0 ? localPosition + span : localPosition);
       this.startedAt = ctx.currentTime;
     }
 
@@ -166,10 +191,11 @@ export class WavAudioPlayer {
 
     if (this.isPlayingInternal && this.audioBuffer) {
       const ctx = this.getContextFn();
-      const duration = this.audioBuffer.duration;
+      const segment = this.getSegmentBounds();
+      const span = Math.max(0.001, segment.end - segment.start);
       const elapsed = Math.max(0, ctx.currentTime - this.startedAt) * this.getEffectivePlaybackRate();
-      const position = duration > 0 ? (this.playStartOffset + elapsed) % duration : 0;
-      this.playStartOffset = position;
+      const localPosition = ((this.playStartOffset - segment.start) + elapsed) % span;
+      this.playStartOffset = segment.start + (localPosition < 0 ? localPosition + span : localPosition);
       this.startedAt = ctx.currentTime;
     }
 
@@ -199,12 +225,15 @@ export class WavAudioPlayer {
     if (!this.audioBuffer) return 0;
     const ctx = this.getContextFn();
     const duration = this.audioBuffer.duration;
+    const segment = this.getSegmentBounds();
+    const span = Math.max(0.001, segment.end - segment.start);
     if (this.isPlayingInternal) {
       if (duration <= 0) return 0;
       const elapsed = Math.max(0, ctx.currentTime - this.startedAt) * this.getEffectivePlaybackRate();
-      return (this.playStartOffset + elapsed) % duration;
+      const localPosition = ((this.playStartOffset - segment.start) + elapsed) % span;
+      return segment.start + (localPosition < 0 ? localPosition + span : localPosition);
     }
-    return Math.min(duration, this.pausedOffset);
+    return this.clampToSegment(Math.min(duration, this.pausedOffset));
   }
 
   public getDuration(): number {
@@ -342,6 +371,20 @@ export class WavAudioPlayer {
   private getEffectivePlaybackRate(): number {
     const detuneMultiplier = Math.pow(2, this.detuneCents / 1200);
     return this.playbackRate * detuneMultiplier;
+  }
+
+  private getSegmentBounds(): { start: number; end: number } {
+    const duration = this.audioBuffer?.duration ?? 0;
+    const maxEnd = duration > 0 ? duration : 0.001;
+    const start = Math.max(0, Math.min(this.segmentStartSec, Math.max(0, maxEnd - 0.001)));
+    const rawEnd = this.segmentEndSec ?? maxEnd;
+    const end = Math.max(start + 0.001, Math.min(rawEnd, maxEnd));
+    return { start, end };
+  }
+
+  private clampToSegment(seconds: number): number {
+    const { start, end } = this.getSegmentBounds();
+    return Math.max(start, Math.min(seconds, Math.max(start, end - 0.001)));
   }
 }
 
@@ -668,6 +711,12 @@ export class WavAudioEngine {
     void player.seek(seconds);
   }
 
+  public setTrackCut(trackId: string, startSec: number, endSec?: number): void {
+    const player = this.trackPlayers.get(trackId);
+    if (!player) return;
+    void player.setLoopRegion(startSec, endSec);
+  }
+
   public isTrackPlaying(trackId: string): boolean {
     return this.trackPlayers.get(trackId)?.isPlaying() ?? false;
   }
@@ -721,6 +770,7 @@ export class WavAudioEngine {
         trackTargetBpm && originalBpm ? trackTargetBpm / originalBpm : 1;
       player.setLowEqGainDb(track.lowEqGainDb ?? 0);
       player.setHighEqGainDb(track.highEqGainDb ?? 0);
+      void player.setLoopRegion(track.cutStartSec ?? 0, track.cutEndSec);
       player.setPlaybackRate(playbackRate);
       player.setDetuneSemitones(track.pitchSemitones ?? 0);
       player.setVolume(canPlay ? (track.volume ?? 1) : 0);

@@ -1,6 +1,8 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { Play, Pause, RefreshCw, Image as  Music, Plus, Trash2, Volume2, VolumeX,  Timer, Headphones, Square, Circle, Wand2, ChevronUp, Loader2, Download, Upload, Music3Icon, Sun, Moon } from 'lucide-react';
+import RangeSlider from 'react-range-slider-input';
+import 'react-range-slider-input/dist/style.css';
 // @ts-ignore
 import { AppStatus, SonicTrack, InstrumentType, SonicProfile } from './types';
 import { composeFromImage } from './services/geminiService';
@@ -16,6 +18,7 @@ const DEFAULT_TRACK_VOLUME = 0.8;
 const DEFAULT_TRACK_PITCH = 0;
 const DEFAULT_TRACK_LOW_EQ_DB = 0;
 const DEFAULT_TRACK_HIGH_EQ_DB = 0;
+const MIN_TRACK_CUT_GAP_SEC = 0.05;
 type PromptTemplateMode = 'current' | 'single_instrument' | 'base_track';
 type FalTrackStatus = 'IN_QUEUE' | 'IN_PROGRESS' | 'COMPLETED' | 'FAILED' | string;
 const TRACK_SLIDER_LABEL_CLASS = "flex flex-col items-center text-[10px] tracking-widest uppercase text-slate-400";
@@ -333,6 +336,8 @@ const App: React.FC = () => {
         pitchSemitones: typeof t.pitchSemitones === 'number' ? t.pitchSemitones : 0,
         lowEqGainDb: typeof t.lowEqGainDb === 'number' ? t.lowEqGainDb : DEFAULT_TRACK_LOW_EQ_DB,
         highEqGainDb: typeof t.highEqGainDb === 'number' ? t.highEqGainDb : DEFAULT_TRACK_HIGH_EQ_DB,
+        cutStartSec: typeof t.cutStartSec === 'number' ? Math.max(0, t.cutStartSec) : 0,
+        cutEndSec: typeof t.cutEndSec === 'number' ? Math.max(0, t.cutEndSec) : undefined,
         selectedInstrument: t.selectedInstrument,
         genre: String(t.genre || parsed.globalGenre || globalGenre),
         isMuted: !!t.isMuted,
@@ -468,6 +473,8 @@ const App: React.FC = () => {
       pitchSemitones: DEFAULT_TRACK_PITCH,
       lowEqGainDb: DEFAULT_TRACK_LOW_EQ_DB,
       highEqGainDb: DEFAULT_TRACK_HIGH_EQ_DB,
+      cutStartSec: 0,
+      cutEndSec: undefined,
       selectedInstrument: 'pad',
       genre: globalGenre,
       isMuted: false,
@@ -538,6 +545,8 @@ const App: React.FC = () => {
       pitchSemitones: 0,
       lowEqGainDb: DEFAULT_TRACK_LOW_EQ_DB,
       highEqGainDb: DEFAULT_TRACK_HIGH_EQ_DB,
+      cutStartSec: 0,
+      cutEndSec: undefined,
       isMuted: false,
       isSoloed: false,
       volume: DEFAULT_TRACK_VOLUME,
@@ -723,6 +732,28 @@ const App: React.FC = () => {
     const next = Math.max(-18, Math.min(18, gainDb));
     setTracks(prev => prev.map(t => t.id === id ? { ...t, highEqGainDb: next } : t));
     wavAudioEngine.setTrackHighEqGainDb(id, next);
+  };
+
+  const setTrackCutRange = (id: string, startSec: number, endSec: number) => {
+    const bufferDuration = wavAudioEngine.getTrackAudioBuffer(id)?.duration ?? 0;
+    if (!(bufferDuration > 0)) return;
+
+    const start = Math.max(0, Math.min(startSec, Math.max(0, bufferDuration - MIN_TRACK_CUT_GAP_SEC)));
+    const end = Math.max(start + MIN_TRACK_CUT_GAP_SEC, Math.min(endSec, bufferDuration));
+    const storedEnd = end >= bufferDuration - 0.001 ? undefined : end;
+
+    setTracks((prev) =>
+      prev.map((t) =>
+        t.id === id
+          ? {
+              ...t,
+              cutStartSec: start,
+              cutEndSec: storedEnd,
+            }
+          : t
+      )
+    );
+    wavAudioEngine.setTrackCut(id, start, storedEnd);
   };
 
   const toggleMuteAllTracks = () => {
@@ -1222,7 +1253,13 @@ const App: React.FC = () => {
           {tracks.map((track) => {
             const effectiveTrackBpm = Math.round(track.targetBpm ?? globalBpm);
             const trackIsPlaying = wavAudioEngine.isTrackPlaying(track.id);
-            const hasTrackAudio = !!wavAudioEngine.getTrackAudioBuffer(track.id);
+            const trackBuffer = wavAudioEngine.getTrackAudioBuffer(track.id);
+            const hasTrackAudio = !!trackBuffer;
+            const trackDuration = trackBuffer?.duration ?? 0;
+            const cutStartSec = Math.max(0, Math.min(track.cutStartSec ?? 0, Math.max(0, trackDuration - MIN_TRACK_CUT_GAP_SEC)));
+            const cutEndSec = track.cutEndSec !== undefined
+              ? Math.max(cutStartSec + MIN_TRACK_CUT_GAP_SEC, Math.min(track.cutEndSec, trackDuration))
+              : trackDuration;
             const falStatus = falTrackStatusById[track.id];
             const falStatusLabel = falStatus === 'IN_PROGRESS' ? 'PROCESSING' : falStatus;
             return (
@@ -1267,7 +1304,7 @@ const App: React.FC = () => {
                       </h4>
                     </div>
 
-                    <div className="rounded-xl border border-white/10 bg-slate-900/50 p-3 flex-1 min-h-0 overflow-y-auto">
+                    <div className="rounded-xl border border-white/10 bg-slate-900/50 p-3 flex-1 min-h-0 overflow-y-auto space-y-4">
                       <p className="text-[9px] font-black uppercase tracking-[0.16em] text-slate-400 mb-2">
                         Prompt used for text-to-audio
                       </p>
@@ -1329,6 +1366,25 @@ const App: React.FC = () => {
 
                     <div className="flex items-center gap-3 p-1">
                      <div>
+                    {hasTrackAudio && trackDuration > 0 && (
+                      <div className="mb-2 rounded-lg border border-white/10 bg-slate-900/60 p-2">
+                        <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">
+                          <span>Track Cut</span>
+                          <span>{cutStartSec.toFixed(1)}s - {cutEndSec.toFixed(1)}s</span>
+                        </div>
+                        <RangeSlider
+                          min={0}
+                          max={trackDuration}
+                          step={0.01}
+                          value={[cutStartSec, cutEndSec]}
+                          onInput={(values: number[]) => {
+                            const nextStart = values?.[0] ?? cutStartSec;
+                            const nextEnd = values?.[1] ?? cutEndSec;
+                            setTrackCutRange(track.id, nextStart, nextEnd);
+                          }}
+                        />
+                      </div>
+                    )}
                     <AudioVisualizer
                     isPlaying={wavAudioEngine.isTrackPlaying(track.id)}
                     audioBuffer={wavAudioEngine.getTrackAudioBuffer(track.id)}
@@ -1442,6 +1498,7 @@ const App: React.FC = () => {
                       </span>
                     </label>
                   </div>
+
                 </div>
               </div>
             );
