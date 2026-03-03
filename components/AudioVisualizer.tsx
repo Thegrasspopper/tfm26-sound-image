@@ -6,9 +6,10 @@ interface AudioVisualizerProps {
   audioBuffer: AudioBuffer | null;
   audioContext: AudioContext | null;
   getCurrentTime?: () => number;
+  onSeek?: (seconds: number) => void;
 }
 
-const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ isPlaying, audioBuffer, audioContext, getCurrentTime }) => {
+const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ isPlaying, audioBuffer, audioContext, getCurrentTime, onSeek }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animationRef = useRef<number | null>(null);
 
@@ -81,12 +82,21 @@ const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ isPlaying, audioBuffe
     };
   }, [isPlaying, audioBuffer, audioContext, getCurrentTime]);
 
+  const handleCanvasPointer = (clientX: number) => {
+    if (!onSeek || !audioBuffer || !canvasRef.current) return;
+    const rect = canvasRef.current.getBoundingClientRect();
+    if (rect.width <= 0) return;
+    const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    onSeek(ratio * audioBuffer.duration);
+  };
+
   return (
     <canvas 
       ref={canvasRef} 
       width={380} 
       height={100} 
-      className="w-full h-14 rounded-lg"
+      onClick={(e) => handleCanvasPointer(e.clientX)}
+      className={`w-full h-14 rounded-lg ${onSeek ? 'cursor-pointer' : ''}`}
     />
   );
 };

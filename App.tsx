@@ -1334,6 +1334,7 @@ const App: React.FC = () => {
                     audioBuffer={wavAudioEngine.getTrackAudioBuffer(track.id)}
                     audioContext={wavAudioEngine.getAudioContextIfAvailable()}
                     getCurrentTime={() => wavAudioEngine.getTrackCurrentTime(track.id)}
+                    onSeek={(seconds) => wavAudioEngine.seekTrack(track.id, seconds)}
                   />
                       <button
                         onClick={() => void toggleSingleTrackPlayback(track.id)}

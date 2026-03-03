@@ -655,6 +655,12 @@ export class WavAudioEngine {
     return this.trackPlayers.get(trackId)?.getCurrentTime() ?? 0;
   }
 
+  public seekTrack(trackId: string, seconds: number): void {
+    const player = this.trackPlayers.get(trackId);
+    if (!player) return;
+    player.seek(seconds);
+  }
+
   public isTrackPlaying(trackId: string): boolean {
     return this.trackPlayers.get(trackId)?.isPlaying() ?? false;
   }
