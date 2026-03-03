@@ -96,7 +96,6 @@ export const GEMINI_ALLOWED_INSTRUMENTS = [
   "guitar",
   "violin",
   "piano",
-  "flute",
   "drums",
   "electric guitar",
   "banjo",

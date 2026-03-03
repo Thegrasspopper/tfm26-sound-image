@@ -4,7 +4,7 @@ import { Play, Pause, RefreshCw, Image as  Music, Plus, Trash2, Volume2, VolumeX
 // @ts-ignore
 import { AppStatus, SonicTrack, InstrumentType, SonicProfile } from './types';
 import { composeFromImage } from './services/geminiService';
-import { runTextoToAuidoWithFalAce, FalTextToAudioAceResult, runTextToAudioWithFal, runTextToAudioWithFalBeatoven } from './services/falService';
+import { runTextoToAuidoWithFalAce, FalTextToAudioAceResult, runTextToAudioWithFal, runTextToAudioWithFalBeatoven, runTextToAudioWithFalStableAudio } from './services/falService';
 import { wavAudioEngine } from "./services/wavAudioEngine";
 import AudioVisualizer from './components/AudioVisualizer';
 
@@ -17,6 +17,7 @@ const DEFAULT_TRACK_PITCH = 0;
 const DEFAULT_TRACK_LOW_EQ_DB = 0;
 const DEFAULT_TRACK_HIGH_EQ_DB = 0;
 type PromptTemplateMode = 'current' | 'single_instrument' | 'base_track';
+type FalTrackStatus = 'IN_QUEUE' | 'IN_PROGRESS' | 'COMPLETED' | 'FAILED' | string;
 const TRACK_SLIDER_LABEL_CLASS = "flex flex-col items-center text-[10px] tracking-widest uppercase text-slate-400";
 const TRACK_SLIDER_WRAP_CLASS = "h-16 w-7 flex items-center justify-center";
 const TRACK_SLIDER_INPUT_CLASS = "w-12 -rotate-90 bg-slate-800 text-white rounded outline-none";
@@ -46,12 +47,13 @@ const App: React.FC = () => {
     instrumental: boolean;
     duration: number;
   }>(null);
+  const [falTrackStatusById, setFalTrackStatusById] = useState<Record<string, FalTrackStatus | undefined>>({});
 
   const [globalBpm, setGlobalBpm] = useState<number>(DEFAULT_GLOBAL_BPM);
   const [audioDurationSec, setAudioDurationSec] = useState<number>(DEFAULT_AUDIO_DURATION_SEC);
   const [showAdvancedAudio, setShowAdvancedAudio] = useState(false);
   const [audioGenInstrumental, setAudioGenInstrumental] = useState(true);
-  const [audioGenBackend, setAudioGenBackend] = useState<'ace' | 'standard' | 'beatoven'>('ace');
+  const [audioGenBackend, setAudioGenBackend] = useState<'ace' | 'standard' | 'beatoven' | 'stable_audio'>('ace');
   const [audioGenGuidanceScale, setAudioGenGuidanceScale] = useState<number>(15);
   const [audioGenNumberOfSteps, setAudioGenNumberOfSteps] = useState<string>('');
   const [audioGenScheduler, setAudioGenScheduler] = useState<"euler" | "heun">("euler");
@@ -134,6 +136,10 @@ const App: React.FC = () => {
       reader.readAsDataURL(blob);
     });
 
+  const setFalTrackStatus = (trackId: string, status: FalTrackStatus | undefined) => {
+    setFalTrackStatusById((prev) => ({ ...prev, [trackId]: status }));
+  };
+
   const buildAudioPromptFromProfile = (
     profile: SonicProfile,
     mode: PromptTemplateMode
@@ -147,27 +153,35 @@ const App: React.FC = () => {
     const texture = String(profile?.soundDesign?.texture || 'balanced');
     const space = String(profile?.soundDesign?.space || 'subtle reverb');
 
+    const common = `Modern sounds, clean mix, no vocals, no drums, no effects-based ear candy.
+     Focus on a realistic instrumental performance that evokes the emotion and sonic profile derived 
+     from the image. Dont use folk instruments or sounds.`;
+
     if (mode === 'single_instrument') {
       return `Create a ${emotionLabel} instrumental in ${musicalMode} mode at ${tempo} BPM.
-Use only ${profile.soundDesign.instrument} for all musical content. Do not use any other instruments, layers, drums, vocals, or effects-based ear candy.
-Focus on one coherent, realistic performance with clean dynamics and a mix-ready result.`;
+          Use only ${profile.soundDesign.instrument} for all musical content. Do not use any other instruments, layers, drums, vocals, or effects-based ear candy.
+          Focus on one coherent, realistic performance with clean dynamics and a mix-ready result. ${common}`;
     }
 
     if (mode === 'base_track') {
       return `Create a ${emotionLabel}-inspired base track in ${musicalMode} mode at ${tempo} BPM.
-Build a simple foundational groove and harmony bed that leaves room for future layers and lead elements.
-Keep arrangement minimal, predictable, and loop-friendly with controlled energy and clean low-end.`;
+        Build a simple foundational groove and harmony bed that leaves room for future layers and lead elements.
+        Keep arrangement minimal, predictable, and loop-friendly with controlled energy and clean low-end. ${common}`;
     }
 
     return `Create a ${emotionLabel}-inspired minimalist instrumental in ${musicalMode} mode at ${tempo} BPM.
-Use ${mainInstrument} as the main element, played in the ${register} register with ${articulation} articulation.
-Texture should be ${texture} with ${space}.
-Keep it as a single realistic, mix-ready instrumental layer.`;
+      Use ${mainInstrument} as the main element, played in the ${register} register with ${articulation} articulation.
+      Texture should be ${texture} with ${space}.
+      Keep it as a single realistic, mix-ready instrumental layer. ${common}`;
   };
 
   const generateAudioWithSelectedFal = async (
     prompt: string,
-    options?: { instrumental?: boolean; duration?: number }
+    options?: {
+      instrumental?: boolean;
+      duration?: number;
+      onStatusUpdate?: (status: FalTrackStatus) => void;
+    }
   ) => {
     const instrumental = options?.instrumental ?? audioGenInstrumental;
     const duration = Math.max(1, Math.min(60, Math.round(options?.duration ?? audioDurationSec)));
@@ -179,6 +193,8 @@ Keep it as a single realistic, mix-ready instrumental layer.`;
         guidance_scale: Math.max(0, audioGenGuidanceScale),
         seconds_total: duration,
         ...(steps !== undefined ? { num_inference_steps: Math.max(1, Math.round(steps)) } : {}),
+      }, {
+        onStatusUpdate: options?.onStatusUpdate,
       });
     }
 
@@ -186,6 +202,20 @@ Keep it as a single realistic, mix-ready instrumental layer.`;
       return runTextToAudioWithFalBeatoven({
         prompt,
         duration,
+      }, {
+        onStatusUpdate: options?.onStatusUpdate,
+      });
+    }
+
+    if (audioGenBackend === 'stable_audio') {
+      const steps = parseOptionalAudioParam(audioGenNumberOfSteps);
+      return runTextToAudioWithFalStableAudio({
+        prompt,
+        guidance_scale: Math.max(0, audioGenGuidanceScale),
+        seconds_total: duration,
+        ...(steps !== undefined ? { num_inference_steps: Math.max(1, Math.round(steps)) } : {}),
+      }, {
+        onStatusUpdate: options?.onStatusUpdate,
       });
     }
 
@@ -213,7 +243,9 @@ Keep it as a single realistic, mix-ready instrumental layer.`;
       ...(optionalAceParams.tag_guidance_scale !== undefined ? { tag_guidance_scale: optionalAceParams.tag_guidance_scale } : {}),
       ...(optionalAceParams.lyric_guidance_scale !== undefined ? { lyric_guidance_scale: optionalAceParams.lyric_guidance_scale } : {}),
     };
-    return runTextoToAuidoWithFalAce(falInput);
+    return runTextoToAuidoWithFalAce(falInput, {
+      onStatusUpdate: options?.onStatusUpdate,
+    });
   };
 
   const exportProject = async () => {
@@ -528,15 +560,22 @@ Keep it as a single realistic, mix-ready instrumental layer.`;
 
       const audioPrompt = buildAudioPromptFromProfile(result, promptTemplateMode);
 
-      const falResult = await generateAudioWithSelectedFal(audioPrompt);
+      setFalTrackStatus(id, 'IN_QUEUE');
+      const falResult = await generateAudioWithSelectedFal(audioPrompt, {
+        onStatusUpdate: (status) => setFalTrackStatus(id, status),
+      });
       console.log("Result: ", falResult);
       setTracks(prev => prev.map(t => t.id === id ? { ...t, audioUrl: falResult.audio.url, audioPrompt: audioPrompt } : t));
+      setFalTrackStatus(id, 'COMPLETED');
       setGlobalError(null);
       await wavAudioEngine.loadTrackFromUrl(id, falResult.audio.url);
       startPlayback();
     } catch (err: any) {
+      setFalTrackStatus(id, 'FAILED');
       setTracks(prev => prev.filter(t => t.id !== id));
       setGlobalError(err.message || "Failed to analyze image.");
+    } finally {
+      setFalTrackStatus(id, undefined);
     }
   };
 
@@ -590,8 +629,13 @@ Keep it as a single realistic, mix-ready instrumental layer.`;
       setIsProcessing(true);
       setGlobalError(null);
       setTracks(prev => prev.map(t => t.id === trackId ? { ...t, status: AppStatus.ANALYZING } : t));
+      setFalTrackStatus(trackId, 'IN_QUEUE');
 
-      const falResult = await generateAudioWithSelectedFal(nextPrompt, { instrumental, duration });
+      const falResult = await generateAudioWithSelectedFal(nextPrompt, {
+        instrumental,
+        duration,
+        onStatusUpdate: (status) => setFalTrackStatus(trackId, status),
+      });
       const audioUrl = falResult?.audio?.url;
       if (!audioUrl) {
         throw new Error('FAL did not return an audio URL.');
@@ -605,15 +649,18 @@ Keep it as a single realistic, mix-ready instrumental layer.`;
       } : t));
 
       await wavAudioEngine.loadTrackFromUrl(trackId, audioUrl);
+      setFalTrackStatus(trackId, 'COMPLETED');
       setRegenerateDraft(null);
       if (isPlaying) {
         await wavAudioEngine.playAll();
       }
     } catch (err: any) {
       console.error('Track regeneration failed', err);
+      setFalTrackStatus(trackId, 'FAILED');
       setTracks(prev => prev.map(t => t.id === trackId ? { ...t, status: AppStatus.READY } : t));
       setGlobalError(err?.message || 'Failed to regenerate track.');
     } finally {
+      setFalTrackStatus(trackId, undefined);
       setIsProcessing(false);
     }
   };
@@ -621,6 +668,7 @@ Keep it as a single realistic, mix-ready instrumental layer.`;
   const removeTrack = (id: string) => {
     const newTracks = tracks.filter(t => t.id !== id);
     setTracks(newTracks);
+    setFalTrackStatus(id, undefined);
     if (newTracks.length === 0) {
       stopPlayback();
     }
@@ -956,7 +1004,7 @@ Keep it as a single realistic, mix-ready instrumental layer.`;
                 <div className="rounded-xl border border-white/10 bg-slate-900/50 p-3 grid grid-cols-2 gap-3">
                   <label className="col-span-2 text-[10px] text-slate-300 space-y-1">
                     <span className="uppercase tracking-widest">Generator</span>
-                    <div className="grid grid-cols-3 gap-2">
+                    <div className="grid grid-cols-4 gap-2">
                       <button
                         type="button"
                         onClick={() => setAudioGenBackend('ace')}
@@ -978,13 +1026,22 @@ Keep it as a single realistic, mix-ready instrumental layer.`;
                       >
                         Beatoven
                       </button>
+                      <button
+                        type="button"
+                        onClick={() => setAudioGenBackend('stable_audio')}
+                        className={`rounded-lg px-3 py-2 text-xs font-bold border transition-all ${audioGenBackend === 'stable_audio' ? 'bg-cyan-600 text-white border-cyan-400' : 'bg-slate-800 text-slate-300 border-white/10 hover:bg-slate-700'}`}
+                      >
+                        Stable Audio
+                      </button>
                     </div>
                     <span className="block text-[10px] text-slate-500">
                       {audioGenBackend === 'ace'
                         ? 'ACE mode uses scheduler, guidance type and ACE-specific guidance controls.'
                         : audioGenBackend === 'standard'
                           ? 'Standard mode uses prompt, duration, guidance and optional steps. ACE-only controls are ignored.'
-                          : 'Beatoven mode uses prompt and duration. Standard and ACE-only controls are ignored.'}
+                          : audioGenBackend === 'beatoven'
+                            ? 'Beatoven mode uses prompt and duration. Standard and ACE-only controls are ignored.'
+                            : 'Stable Audio mode uses prompt, duration, guidance and optional steps. ACE-only controls are ignored.'}
                     </span>
                   </label>
 
@@ -1166,6 +1223,8 @@ Keep it as a single realistic, mix-ready instrumental layer.`;
             const effectiveTrackBpm = Math.round(track.targetBpm ?? globalBpm);
             const trackIsPlaying = wavAudioEngine.isTrackPlaying(track.id);
             const hasTrackAudio = !!wavAudioEngine.getTrackAudioBuffer(track.id);
+            const falStatus = falTrackStatusById[track.id];
+            const falStatusLabel = falStatus === 'IN_PROGRESS' ? 'PROCESSING' : falStatus;
             return (
               <div
                 key={track.id}
@@ -1176,6 +1235,11 @@ Keep it as a single realistic, mix-ready instrumental layer.`;
                   <div className="absolute inset-0 bg-slate-900/80 backdrop-blur-md z-30 flex flex-col items-center justify-center gap-4 text-center p-6">
                     <RefreshCw className="w-10 h-10 text-pink-400 animate-spin" />
                     <p className="text-sm font-bold text-white uppercase tracking-widest animate-pulse">Scanning Visual DNA...</p>
+                    {falStatusLabel && (
+                      <p className="text-xs font-bold text-cyan-300 uppercase tracking-widest">
+                        FAL: {falStatusLabel}
+                      </p>
+                    )}
                   </div>
                 )}
 
@@ -1188,10 +1252,11 @@ Keep it as a single realistic, mix-ready instrumental layer.`;
                     }}
                   />
 
-                  <div className={`absolute bottom-0 left-0 right-0 glass-dark backdrop-blur-2xl border-t border-white/10 z-20 p-4 transition-transform duration-500 ${showSettings === track.id ? 'translate-y-0' : 'translate-y-[calc(100%-40px)]'}`}>
+                  <div className={`absolute bottom-0 left-0 right-0 glass-dark backdrop-blur-2xl border-t border-white/10 z-20 p-4 transition-transform duration-500 max-h-full flex flex-col ${showSettings === track.id ? 'translate-y-0' : 'translate-y-[calc(100%-40px)]'}`}>
                     <button
-                      onClick={() => setShowSettings(showSettings === track.id ? null : track.id)}
-                      className="w-full h-8 -mt-4 flex items-center justify-center text-slate-400 hover:text-white group/btn"
+                      type="button"
+                      onClick={() => setShowSettings((prev) => (prev === track.id ? null : track.id))}
+                      className="w-full h-8 flex items-center justify-center text-slate-400 hover:text-white group/btn relative z-30"
                     >
                       <ChevronUp className={`w-4 h-4 transition-transform ${showSettings === track.id ? 'rotate-180' : ''}`} />
                     </button>
@@ -1202,7 +1267,7 @@ Keep it as a single realistic, mix-ready instrumental layer.`;
                       </h4>
                     </div>
 
-                    <div className="rounded-xl border border-white/10 bg-slate-900/50 p-3">
+                    <div className="rounded-xl border border-white/10 bg-slate-900/50 p-3 flex-1 min-h-0 overflow-y-auto">
                       <p className="text-[9px] font-black uppercase tracking-[0.16em] text-slate-400 mb-2">
                         Prompt used for text-to-audio
                       </p>
@@ -1213,6 +1278,11 @@ Keep it as a single realistic, mix-ready instrumental layer.`;
                   </div>
 
                   <div className="absolute inset-0 bg-gradient-to-t from-slate-900/90 via-transparent to-transparent pointer-events-none" />
+                    {falStatusLabel && (
+                      <div className="absolute top-2 left-2 z-20 px-2 py-1 rounded-md border border-cyan-400/30 bg-slate-900/80 text-[10px] font-black tracking-widest uppercase text-cyan-300">
+                        FAL {falStatusLabel}
+                      </div>
+                    )}
                     <div className="absolute top-2 flex flex-col gap-2 z-10 p-1">
                           <div className="mt-2 flex items-center justify-end text-[10px] font-black tracking-widest uppercase text-slate-400">
                                         <Timer className="w-3 h-3 mr-1 text-pink-400" />

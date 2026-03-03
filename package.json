@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@fal-ai/client": "^1.9.1",
-    "@google/genai": "^1.38.0",
+    "@google/genai": "^1.43.0",
     "lucide-react": "0.463.0",
     "openai": "^5.23.2",
     "react": "^19.2.4",

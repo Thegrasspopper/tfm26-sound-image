@@ -7,7 +7,7 @@ const GEMINI_INSTRUMENT_SET = new Set<string>(GEMINI_ALLOWED_INSTRUMENTS);
 const INSTRUMENT_EMOTION_GUIDE_ES = `
 Instrument-emotion correspondence guide (use as timbral priority):
 - Trumpet and saxophone: joy/jubilation; saxophone and cornet can also convey anger due to rough, threatening timbre.
-- Clarinet and flute: frequently associated with sadness.
+- Piano or guittar: frequently associated with sadness.
 - Violin: versatile; can work for sadness (lament/grieving) and also joy depending on context.
 - French horn (horn): tends to be more emotionally neutral in some studies.
 - Oboe and bassoon: tendency toward sadness; bassoon can become more romantic with heavy reverberation.
@@ -86,11 +86,6 @@ export const composeFromImage = async (base64Image: string, genre: string = "Mod
               - Texture descriptor
               - Spatial depth (Dry / Slight reverb / Large space)
 
-              STEP 4.1 - Instrument-emotion guide ( mandatory):
-              ${INSTRUMENT_EMOTION_GUIDE_ES}
-              Apply this guide explicitly when selecting "soundDesign.instrument".
-              If the best-match from the guide is not in the allowed list, choose the closest allowed instrument by timbre and emotional role.
-
               STEP 5 - Image description:
               Describe the image and the emotions it evokes in a concise paragraph.
 
@@ -98,7 +93,7 @@ export const composeFromImage = async (base64Image: string, genre: string = "Mod
   Provide strictly valid JSON.`;
 
   const response = await ai.models.generateContent({
-    model: 'gemini-3-flash-preview',
+    model: 'gemini-3.1-flash-lite-preview',
     contents: {
       parts: [
         { inlineData: { mimeType: 'image/jpeg', data: base64Image } },

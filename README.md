@@ -29,9 +29,7 @@ TODO:
    - Botón mute
    - Diagrama al inicio está liso
    - Interfaz
-   Boton mute y play a la vez
-   Barra sonido.
-   Efecto tipo: eco, reverb, 
-   Botón play para cada track
-   Armonizar tracks: Selecionar tu base y use esos BPM para el resto.
-   Export should also download audios, or upload to web.
+   Export should also download audios, or upload to web?
+   When creating the song, don't use folkloric music
+   Jump to track position.
+   Cut track.
