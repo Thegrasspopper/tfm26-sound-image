@@ -118,13 +118,20 @@ export class WavAudioPlayer {
     this.pausedOffset = 0;
   }
 
-  public seek(seconds: number): void {
+  public async seek(seconds: number): Promise<void> {
     if (!this.audioBuffer) return;
-    const clamped = Math.max(0, Math.min(seconds, this.audioBuffer.duration));
+    const duration = Math.max(0, this.audioBuffer.duration);
+    const maxSeek = duration > 0 ? Math.max(0, duration - 0.001) : 0;
+    const clamped = Math.max(0, Math.min(seconds, maxSeek));
     const wasPlaying = this.isPlayingInternal;
-    if (wasPlaying) this.stop();
+    if (wasPlaying) {
+      this.pause();
+    }
     this.pausedOffset = clamped;
-    if (wasPlaying) void this.play();
+    this.playStartOffset = clamped;
+    if (wasPlaying) {
+      await this.play();
+    }
   }
 
   public setVolume(volume: number): void {
@@ -610,7 +617,7 @@ export class WavAudioEngine {
   }
 
   public seek(seconds: number): void {
-    this.defaultPlayer.seek(seconds);
+    void this.defaultPlayer.seek(seconds);
   }
 
   public setVolume(volume: number): void {
@@ -658,7 +665,7 @@ export class WavAudioEngine {
   public seekTrack(trackId: string, seconds: number): void {
     const player = this.trackPlayers.get(trackId);
     if (!player) return;
-    player.seek(seconds);
+    void player.seek(seconds);
   }
 
   public isTrackPlaying(trackId: string): boolean {

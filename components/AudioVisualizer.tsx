@@ -25,10 +25,28 @@ const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ isPlaying, audioBuffe
 
     const width = canvas.width;
     const height = canvas.height;
-    const samples = audioBuffer.getChannelData(0);
     const duration = Math.max(audioBuffer.duration, 0.0001);
     const bars = 64;
     const barWidth = width / bars;
+    const channelCount = Math.max(1, audioBuffer.numberOfChannels);
+    const peaks = new Array<number>(bars).fill(0);
+
+    for (let i = 0; i < bars; i++) {
+      const start = Math.floor((i / bars) * audioBuffer.length);
+      const end = Math.max(start + 1, Math.floor(((i + 1) / bars) * audioBuffer.length));
+      let peak = 0;
+
+      for (let channel = 0; channel < channelCount; channel++) {
+        const samples = audioBuffer.getChannelData(channel);
+        for (let s = start; s < end; s++) {
+          const sample = samples[s];
+          const v = Number.isFinite(sample) ? Math.abs(sample) : 0;
+          if (v > peak) peak = v;
+        }
+      }
+
+      peaks[i] = peak;
+    }
 
     const draw = () => {
       const themeStyles = getComputedStyle(document.documentElement);
@@ -46,14 +64,7 @@ const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ isPlaying, audioBuffe
       const progressX = progress * width;
 
       for (let i = 0; i < bars; i++) {
-        const start = Math.floor((i / bars) * samples.length);
-        const end = Math.floor(((i + 1) / bars) * samples.length);
-        let peak = 0;
-        for (let s = start; s < end; s++) {
-          const v = Math.abs(samples[s] ?? 0);
-          if (v > peak) peak = v;
-        }
-
+        const peak = peaks[i];
         const h = Math.max(2, peak * height * 0.9);
         const x = i * barWidth + 1;
         const y = (height - h) / 2;
