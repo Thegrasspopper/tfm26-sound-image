@@ -26,6 +26,3 @@ TODO:
    - Diagrama al inicio está liso
    - Interfaz
    Export should also download audios, or upload to web?
-   When creating the song, don't use folkloric music
-   Jump to track position.
-   Cut track.

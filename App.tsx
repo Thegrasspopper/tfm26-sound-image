@@ -4,9 +4,10 @@ import { Play, Pause, RefreshCw, Image as  Music, Plus, Trash2, Volume2, VolumeX
 import RangeSlider from 'react-range-slider-input';
 import 'react-range-slider-input/dist/style.css';
 // @ts-ignore
-import { AppStatus, SonicTrack, InstrumentType, SonicProfile } from './types';
+import { AppStatus, SonicTrack, InstrumentType } from './types';
 import { composeFromImage } from './services/geminiService';
 import { runTextoToAuidoWithFalAce, FalTextToAudioAceResult, runTextToAudioWithFal, runTextToAudioWithFalBeatoven, runTextToAudioWithFalStableAudio } from './services/falService';
+import { buildAudioPromptFromProfile, PromptTemplateMode } from './services/audioPromptBuilder';
 import { wavAudioEngine } from "./services/wavAudioEngine";
 import AudioVisualizer from './components/AudioVisualizer';
 
@@ -19,7 +20,6 @@ const DEFAULT_TRACK_PITCH = 0;
 const DEFAULT_TRACK_LOW_EQ_DB = 0;
 const DEFAULT_TRACK_HIGH_EQ_DB = 0;
 const MIN_TRACK_CUT_GAP_SEC = 0.05;
-type PromptTemplateMode = 'current' | 'single_instrument' | 'base_track';
 type FalTrackStatus = 'IN_QUEUE' | 'IN_PROGRESS' | 'COMPLETED' | 'FAILED' | string;
 const TRACK_SLIDER_LABEL_CLASS = "flex flex-col items-center text-[10px] tracking-widest uppercase text-slate-400";
 const TRACK_SLIDER_WRAP_CLASS = "h-16 w-7 flex items-center justify-center";
@@ -141,41 +141,6 @@ const App: React.FC = () => {
 
   const setFalTrackStatus = (trackId: string, status: FalTrackStatus | undefined) => {
     setFalTrackStatusById((prev) => ({ ...prev, [trackId]: status }));
-  };
-
-  const buildAudioPromptFromProfile = (
-    profile: SonicProfile,
-    mode: PromptTemplateMode
-  ): string => {
-    const emotionLabel = String(profile?.emotion?.label || 'expressive').toLowerCase();
-    const musicalMode = String(profile?.musicalParameters?.mode || 'modal');
-    const tempo = Number(profile?.musicalParameters?.tempo) || globalBpm;
-    const register = String(profile?.musicalParameters?.register || 'mid');
-    const articulation = String(profile?.musicalParameters?.articulation || 'mixed');
-    const mainInstrument = String(profile?.soundDesign?.instrument || 'synth');
-    const texture = String(profile?.soundDesign?.texture || 'balanced');
-    const space = String(profile?.soundDesign?.space || 'subtle reverb');
-
-    const common = `Modern sounds, clean mix, no vocals, no drums, no effects-based ear candy.
-     Focus on a realistic instrumental performance that evokes the emotion and sonic profile derived 
-     from the image. Dont use folk instruments or sounds.`;
-
-    if (mode === 'single_instrument') {
-      return `Create a ${emotionLabel} instrumental in ${musicalMode} mode at ${tempo} BPM.
-          Use only ${profile.soundDesign.instrument} for all musical content. Do not use any other instruments, layers, drums, vocals, or effects-based ear candy.
-          Focus on one coherent, realistic performance with clean dynamics and a mix-ready result. ${common}`;
-    }
-
-    if (mode === 'base_track') {
-      return `Create a ${emotionLabel}-inspired base track in ${musicalMode} mode at ${tempo} BPM.
-        Build a simple foundational groove and harmony bed that leaves room for future layers and lead elements.
-        Keep arrangement minimal, predictable, and loop-friendly with controlled energy and clean low-end. ${common}`;
-    }
-
-    return `Create a ${emotionLabel}-inspired minimalist instrumental in ${musicalMode} mode at ${tempo} BPM.
-      Use ${mainInstrument} as the main element, played in the ${register} register with ${articulation} articulation.
-      Texture should be ${texture} with ${space}.
-      Keep it as a single realistic, mix-ready instrumental layer. ${common}`;
   };
 
   const generateAudioWithSelectedFal = async (
@@ -567,7 +532,7 @@ const App: React.FC = () => {
         status: AppStatus.READY,
       } : t));
 
-      const audioPrompt = buildAudioPromptFromProfile(result, promptTemplateMode);
+      const audioPrompt = buildAudioPromptFromProfile(result, promptTemplateMode, { fallbackTempo: globalBpm });
 
       setFalTrackStatus(id, 'IN_QUEUE');
       const falResult = await generateAudioWithSelectedFal(audioPrompt, {
@@ -612,7 +577,7 @@ const App: React.FC = () => {
       track.audioPrompt ||
       ((track as any).audioPrompt2 ?? '') ||
       '';
-    const templatedPrompt = buildAudioPromptFromProfile(track.profile, promptTemplateMode);
+    const templatedPrompt = buildAudioPromptFromProfile(track.profile, promptTemplateMode, { fallbackTempo: globalBpm });
     const currentPrompt = promptTemplateMode === 'current'
       ? (savedPrompt || templatedPrompt)
       : templatedPrompt;
@@ -1083,9 +1048,9 @@ const App: React.FC = () => {
                       onChange={(e) => setPromptTemplateMode(e.target.value as PromptTemplateMode)}
                       className="w-full bg-slate-800 text-white rounded .5 text-xs border border-white/10 outline-none"
                     >
-                      <option value="current">1. Current prompt</option>
-                      <option value="single_instrument">2. One specific instrument</option>
-                      <option value="base_track">3. Base track</option>
+                      <option value="current">General prompt</option>
+                      <option value="single_instrument">One instrument prompt</option>
+                      <option value="base_track">Base track prompt</option>
                     </select>
                   </label>
 
